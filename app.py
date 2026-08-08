@@ -8,21 +8,18 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
 
-# --- 1. Secrets（安全な設定機能）からの読み込み設定 ---
-# ローカル実行時とクラウド実行時の両方に対応
+# --- 1. Secrets/環境設定 ---
 if "GEMINI_API_KEY" in st.secrets:
     MY_API_KEY = st.secrets["GEMINI_API_KEY"]
 else:
-    # 修正後
     MY_API_KEY = ""
-    SPREADSHEET_ID = "1RPpypQ_UiiwNkTX923Q_c1suxMlS2DhvxkOvV0I98O8"
 
 if "SPREADSHEET_ID" in st.secrets:
     SPREADSHEET_ID = st.secrets["SPREADSHEET_ID"]
 else:
     SPREADSHEET_ID = "1RPpypQ_UiiwNkTX923Q_c1suxMlS2DhvxkOvV0I98O8"
 
-# --- 2. データ構造の定義 ---
+# --- 2. データ構造定義 ---
 class NutritionData(BaseModel):
     food_name: str = Field(description="食事の名前やメニュー内容")
     calories: int = Field(description="推定総カロリー(kcal)")
@@ -48,7 +45,6 @@ def analyze_nutrition(input_data, api_key: str) -> dict:
 
 # --- 4. スプレッドシート操作関数 ---
 def get_worksheet():
-    # クラウド環境ではSecretsからGoogle認証情報を読み込み、ローカルでは credentials.json を使用
     if "gcp_service_account" in st.secrets:
         creds_dict = dict(st.secrets["gcp_service_account"])
         gc = gspread.service_account_from_dict(creds_dict)
@@ -72,16 +68,25 @@ def save_to_spreadsheet(data: dict):
     ]
     ws.append_row(row)
 
-def load_today_data():
+def load_all_data():
     ws = get_worksheet()
     records = ws.get_all_records()
     if not records:
         return pd.DataFrame()
-    df = pd.DataFrame(records)
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    if "日付" in df.columns:
-        df = df[df["日付"] == today_str]
-    return df
+    return pd.DataFrame(records)
+
+# 削除処理
+def delete_spreadsheet_row(row_index: int):
+    ws = get_worksheet()
+    # 1行目はヘッダーのため、データ行は row_index + 2
+    ws.delete_rows(row_index + 2)
+
+# 修正更新処理
+def update_spreadsheet_row(row_index: int, updated_data: list):
+    ws = get_worksheet()
+    target_row = row_index + 2
+    cell_range = f"A{target_row}:G{target_row}"
+    ws.update(cell_range, [updated_data])
 
 # --- 5. Streamlit UI 画面構築 ---
 st.set_page_config(page_title="PFC食事管理ツール", layout="centered")
@@ -129,22 +134,76 @@ if "result" in st.session_state:
 
 st.divider()
 
+# --- 本日の摂取記録 & 合計表示 ---
 st.subheader("📊 本日の摂取記録")
-today_df = load_today_data()
+all_df = load_all_data()
 
-if not today_df.empty:
-    st.dataframe(today_df, use_container_width=True)
-    
-    c_sum = pd.to_numeric(today_df["カロリー"], errors="coerce").sum()
-    p_sum = pd.to_numeric(today_df["タンパク質"], errors="coerce").sum()
-    f_sum = pd.to_numeric(today_df["脂質"], errors="coerce").sum()
-    carbs_sum = pd.to_numeric(today_df["炭水化物"], errors="coerce").sum()
+if not all_df.empty:
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_df = all_df[all_df["日付"] == today_str] if "日付" in all_df.columns else pd.DataFrame()
 
-    st.write("### 本日の合計")
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("合計カロリー", f"{int(c_sum)} kcal")
-    m2.metric("合計 P", f"{round(p_sum, 1)} g")
-    m3.metric("合計 F", f"{round(f_sum, 1)} g")
-    m4.metric("合計 C", f"{round(carbs_sum, 1)} g")
+    if not today_df.empty:
+        st.dataframe(today_df, use_container_width=True)
+        
+        c_sum = pd.to_numeric(today_df["カロリー"], errors="coerce").sum()
+        p_sum = pd.to_numeric(today_df["タンパク質"], errors="coerce").sum()
+        f_sum = pd.to_numeric(today_df["脂質"], errors="coerce").sum()
+        carbs_sum = pd.to_numeric(today_df["炭水化物"], errors="coerce").sum()
+
+        st.write("### 本日の合計")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("合計カロリー", f"{int(c_sum)} kcal")
+        m2.metric("合計 P", f"{round(p_sum, 1)} g")
+        m3.metric("合計 F", f"{round(f_sum, 1)} g")
+        m4.metric("合計 C", f"{round(carbs_sum, 1)} g")
+    else:
+        st.info("本日の記録はまだありません。")
+
+    st.divider()
+
+    # --- 🛠️ データの修正・削除機能 ---
+    with st.expander("🛠️ 過去記録の修正・削除"):
+        # 選択用のリストを作成
+        options = []
+        for idx, row in all_df.iterrows():
+            label = f"[{row.get('日付', '')} {row.get('時間', '')}] {row.get('食事内容', '')} ({row.get('カロリー', 0)}kcal)"
+            options.append((idx, label))
+        
+        selected_option = st.selectbox(
+            "操作するレコードを選択してください",
+            options=options,
+            format_func=lambda x: x
+        )
+        
+        if selected_option:
+            selected_idx = selected_option[0]
+            selected_row = all_df.loc[selected_idx]
+
+            tab1, tab2 = st.tabs(["📝 内容を修正", "🗑️ 記録を削除"])
+
+            # 修正タブ
+            with tab1:
+                st.write("修正したい項目を変更して「修正内容を保存」を押してください。")
+                edit_date = st.text_input("日付", value=str(selected_row.get("日付", "")))
+                edit_time = st.text_input("時間", value=str(selected_row.get("時間", "")))
+                edit_food = st.text_input("食事内容", value=str(selected_row.get("食事内容", "")))
+                edit_cal = st.number_input("カロリー(kcal)", value=int(selected_row.get("カロリー", 0)))
+                edit_p = st.number_input("タンパク質(P/g)", value=float(selected_row.get("タンパク質", 0.0)))
+                edit_f = st.number_input("脂質(F/g)", value=float(selected_row.get("脂質", 0.0)))
+                edit_c = st.number_input("炭水化物(C/g)", value=float(selected_row.get("炭水化物", 0.0)))
+
+                if st.button("修正内容を保存"):
+                    updated_list = [edit_date, edit_time, edit_food, edit_cal, edit_p, edit_f, edit_c]
+                    update_spreadsheet_row(selected_idx, updated_list)
+                    st.success("データを更新しました！")
+                    st.rerun()
+
+            # 削除タブ
+            with tab2:
+                st.warning("⚠️ この操作は取り消せません。選択した記録を削除しますか？")
+                if st.button("この記録を削除する", type="primary"):
+                    delete_spreadsheet_row(selected_idx)
+                    st.success("記録を削除しました！")
+                    st.rerun()
 else:
-    st.info("本日の記録はまだありません。")
+    st.info("データがまだありません。")
