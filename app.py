@@ -207,3 +207,54 @@ if not all_df.empty:
                     st.rerun()
 else:
     st.info("データがまだありません。")
+
+#日付ごとの合計表示機能↓
+# --- ここから一番最後に追加 ---
+st.divider()
+
+# --- 📅 過去の記録・日付別集計 ---
+st.subheader("📅 過去の記録・日付別集計")
+
+if not all_df.empty and "日付" in all_df.columns:
+    # 1. 日付ごとの合計一覧テーブルを作成
+    # 数値列を数値型に変換して合計
+    calc_df = all_df.copy()
+    for col in ["カロリー", "タンパク質", "脂質", "炭水化物"]:
+        calc_df[col] = pd.to_numeric(calc_df[col], errors="coerce").fillna(0)
+
+    summary_df = calc_df.groupby("日付", as_index=False).agg({
+        "カロリー": "sum",
+        "タンパク質": "sum",
+        "脂質": "sum",
+        "炭水化物": "sum"
+    })
+    
+    summary_df["カロリー"] = summary_df["カロリー"].astype(int)
+    summary_df["タンパク質"] = summary_df["タンパク質"].round(1)
+    summary_df["脂質"] = summary_df["脂質"].round(1)
+    summary_df["炭水化物"] = summary_df["炭水化物"].round(1)
+    
+    st.write("### 📊 日付別 合計一覧")
+    st.dataframe(summary_df, use_container_width=True)
+
+    # 2. 過去の日付を選択して詳細と合計を表示する機能
+    unique_dates = sorted(all_df["日付"].unique().tolist(), reverse=True)
+    selected_date = st.selectbox("詳細を表示したい日付を選択してください", unique_dates)
+
+    if selected_date:
+        filtered_df = all_df[all_df["日付"] == selected_date]
+        st.write(f"#### 📅 {selected_date} の詳細記録")
+        st.dataframe(filtered_df, use_container_width=True)
+
+        c_s = pd.to_numeric(filtered_df["カロリー"], errors="coerce").sum()
+        p_s = pd.to_numeric(filtered_df["タンパク質"], errors="coerce").sum()
+        f_s = pd.to_numeric(filtered_df["脂質"], errors="coerce").sum()
+        carbs_s = pd.to_numeric(filtered_df["炭水化物"], errors="coerce").sum()
+
+        st.write(f"**{selected_date} の合計数値**")
+        sm1, sm2, sm3, sm4 = st.columns(4)
+        sm1.metric("合計カロリー", f"{int(c_s)} kcal")
+        sm2.metric("合計 P", f"{round(p_s, 1)} g")
+        sm3.metric("合計 F", f"{round(f_s, 1)} g")
+        sm4.metric("合計 C", f"{round(carbs_s, 1)} g")
+# --- ここまで追加 ---
