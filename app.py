@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone, timedelta  
 import gspread
 import pandas as pd
 from PIL import Image
@@ -56,7 +56,11 @@ def get_worksheet():
 
 def save_to_spreadsheet(data: dict):
     ws = get_worksheet()
-    now = datetime.now()
+    
+    # 日本時間（UTC+9時間）を指定して現在時刻を取得
+    JST = timezone(timedelta(hours=9))
+    now = datetime.now(JST)
+
     row = [
         now.strftime("%Y-%m-%d"),
         now.strftime("%H:%M"),
