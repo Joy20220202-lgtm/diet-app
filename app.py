@@ -96,7 +96,7 @@ def update_spreadsheet_row(row_index: int, updated_data: list):
 st.set_page_config(page_title="PFC食事管理ツール", layout="centered")
 st.title("🥗 食事・PFC管理ツール")
 
-input_type = st.radio("入力方法を選択してください", ["テキスト入力", "画像アップロード"], horizontal=True)
+input_type = st.radio("入力方法を選択してください", ["テキスト入力", "画像アップロード", "カメラで撮影"], horizontal=True)
 
 input_content = None
 
@@ -104,11 +104,17 @@ if input_type == "テキスト入力":
     text_val = st.text_input("食事内容を入力（例: 鮭の塩焼き1切れ、白米200g）")
     if text_val:
         input_content = text_val
-else:
+elif input_type == "画像アップロード":
     uploaded_file = st.file_uploader("食事写真をアップロード", type=["jpg", "jpeg", "png"])
     if uploaded_file:
         image = Image.open(uploaded_file)
         st.image(image, caption="アップロード画像", use_column_width=True)
+        input_content = image
+else:
+    camera_file = st.camera_input("食事を撮影してください")
+    if camera_file:
+        image = Image.open(camera_file)
+        st.image(image, caption="撮影した画像", use_column_width=True)
         input_content = image
 
 if st.button("カロリー・PFCを計算する") and input_content:
