@@ -108,13 +108,13 @@ elif input_type == "画像アップロード":
     uploaded_file = st.file_uploader("食事写真をアップロード", type=["jpg", "jpeg", "png"])
     if uploaded_file:
         image = Image.open(uploaded_file)
-        st.image(image, caption="アップロード画像", use_column_width=True)
+        st.image(image, caption="アップロード画像",)
         input_content = image
 else:
     camera_file = st.camera_input("食事を撮影してください")
     if camera_file:
         image = Image.open(camera_file)
-        st.image(image, caption="撮影した画像", use_column_width=True)
+        st.image(image, caption="撮影した画像",)
         input_content = image
 
 if st.button("カロリー・PFCを計算する") and input_content:
