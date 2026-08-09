@@ -200,7 +200,7 @@ if not all_df.empty:
         selected_option = st.selectbox(
             "操作するレコードを選択してください",
             options=options,
-            format_func=lambda x: x
+            format_func=lambda x: x[1]
         )
         
         if selected_option:
