@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 from datetime import datetime, timezone, timedelta
 import gspread
@@ -43,22 +44,35 @@ def analyze_nutrition(input_data, api_key: str) -> dict:
 
 # --- 3. スプレッドシート操作関数 ---
 def get_spreadsheet():
-    # クラウド環境（st.secrets）では一時ファイルを作成して安全に読み込む
-    if "GCP_JSON_TEXT" in st.secrets:
-        json_text = st.secrets["GCP_JSON_TEXT"]
-        with open("credentials_cloud.json", "w", encoding="utf-8") as f:
-            f.write(json_text)
-        gc = gspread.service_account(filename="credentials_cloud.json")
-    elif "gcp_service_account" in st.secrets:
-        creds_dict = dict(st.secrets["gcp_service_account"])
-        if "private_key" in creds_dict:
-            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
-        gc = gspread.service_account_from_dict(creds_dict)
-    else:
-        # ローカルPC環境では手元の credentials.json を使用
-        gc = gspread.service_account(filename="credentials.json")
-        
-    return gc.open_by_key(SPREADSHEET_ID)
+    # 1. Secrets に GCP_JSON_TEXT が存在する場合
+    if hasattr(st, "secrets") and "GCP_JSON_TEXT" in st.secrets and st.secrets["GCP_JSON_TEXT"]:
+        try:
+            json_text = st.secrets["GCP_JSON_TEXT"]
+            with open("credentials_cloud.json", "w", encoding="utf-8") as f:
+                f.write(json_text)
+            return gspread.service_account(filename="credentials_cloud.json").open_by_key(SPREADSHEET_ID)
+        except Exception as e:
+            st.error(f"【Secrets 認証エラー (GCP_JSON_TEXT)】: {e}")
+            st.stop()
+
+    # 2. Secrets に gcp_service_account が存在する場合
+    if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
+        try:
+            creds_dict = dict(st.secrets["gcp_service_account"])
+            if "private_key" in creds_dict:
+                creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+            return gspread.service_account_from_dict(creds_dict).open_by_key(SPREADSHEET_ID)
+        except Exception as e:
+            st.error(f"【Secrets 認証エラー (gcp_service_account)】: {e}")
+            st.stop()
+
+    # 3. Secrets が空で、ローカルの credentials.json も存在しない場合（クラウド環境）
+    if not os.path.exists("credentials.json"):
+        st.error("🚨【原因確定】Streamlit Cloud の Secrets（設定）が空です！右下の 'Manage app' > 'Secrets' を開き、鍵の設定を入力して保存（Save）してください。")
+        st.stop()
+
+    # 4. ローカルPC環境
+    return gspread.service_account(filename="credentials.json").open_by_key(SPREADSHEET_ID)
 
 def get_worksheet():
     sh = get_spreadsheet()
