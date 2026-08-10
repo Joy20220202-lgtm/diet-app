@@ -10,14 +10,11 @@ from google.genai import types
 from pydantic import BaseModel, Field
 
 # --- 設定項目 ---
-if "GEMINI_API_KEY" in st.secrets:
-    MY_API_KEY = st.secrets["GEMINI_API_KEY"]
-else:
-    MY_API_KEY = ""
-
-if "SPREADSHEET_ID" in st.secrets:
-    SPREADSHEET_ID = st.secrets["SPREADSHEET_ID"]
-else:
+try:
+    MY_API_KEY = st.secrets.get("GEMINI_API_KEY", "AQ.Ab8RN6KZA_e6l-GreYHWYoZKZXPZVfEk3qwL2UehTQKBFBc4Og")
+    SPREADSHEET_ID = st.secrets.get("SPREADSHEET_ID", "1RPpypQ_UiiwNkTX923Q_c1suxMlS2DhvxkOvV0I98O8")
+except Exception:
+    MY_API_KEY = "AQ.Ab8RN6KZA_e6l-GreYHWYoZKZXPZVfEk3qwL2UehTQKBFBc4Og"
     SPREADSHEET_ID = "1RPpypQ_UiiwNkTX923Q_c1suxMlS2DhvxkOvV0I98O8"
 
 # --- 1. データ構造定義 ---
@@ -45,15 +42,29 @@ def analyze_nutrition(input_data, api_key: str) -> dict:
     return json.loads(response.text)
 
 # --- 3. スプレッドシート操作関数 ---
-def get_worksheet():
-    if "gcp_service_account" in st.secrets:
-        creds_dict = dict(st.secrets["gcp_service_account"])
-        gc = gspread.service_account_from_dict(creds_dict)
-    else:
+def get_spreadsheet():
+    try:
+        if "gcp_service_account" in st.secrets:
+            creds_dict = dict(st.secrets["gcp_service_account"])
+            gc = gspread.service_account_from_dict(creds_dict)
+        else:
+            gc = gspread.service_account(filename="credentials.json")
+    except Exception:
         gc = gspread.service_account(filename="credentials.json")
-        
-    sh = gc.open_by_key(SPREADSHEET_ID)
+    return gc.open_by_key(SPREADSHEET_ID)
+
+def get_worksheet():
+    sh = get_spreadsheet()
     return sh.get_worksheet(0)
+
+def get_weight_worksheet():
+    sh = get_spreadsheet()
+    try:
+        return sh.worksheet("体重記録")
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet(title="体重記録", rows=100, cols=10)
+        ws.append_row(["日付", "体重", "体脂肪率"])
+        return ws
 
 def save_to_spreadsheet(data: dict, meal_type: str):
     ws = get_worksheet()
@@ -72,6 +83,10 @@ def save_to_spreadsheet(data: dict, meal_type: str):
     ]
     ws.append_row(row)
 
+def save_weight_data(date_str: str, weight: float, fat: float):
+    ws = get_weight_worksheet()
+    ws.append_row([date_str, weight, fat])
+
 def load_all_data():
     ws = get_worksheet()
     records = ws.get_all_records()
@@ -79,8 +94,17 @@ def load_all_data():
         return pd.DataFrame()
     return pd.DataFrame(records)
 
+def load_weight_data():
+    ws = get_weight_worksheet()
+    records = ws.get_all_records()
+    return pd.DataFrame(records) if records else pd.DataFrame()
+
 def delete_spreadsheet_row(row_index: int):
     ws = get_worksheet()
+    ws.delete_rows(row_index + 2)
+
+def delete_weight_row(row_index: int):
+    ws = get_weight_worksheet()
     ws.delete_rows(row_index + 2)
 
 def update_spreadsheet_row(row_index: int, updated_data: list):
@@ -90,105 +114,107 @@ def update_spreadsheet_row(row_index: int, updated_data: list):
     ws.update(cell_range, [updated_data])
 
 # --- 4. Streamlit UI 画面構築 ---
-st.set_page_config(page_title="PFC食事管理ツール", layout="centered")
-st.title("🥗 食事・PFC管理ツール")
+st.set_page_config(page_title="ボディメイク&PFC管理ツール", layout="centered")
+st.title("💪 ボディメイク&PFC管理ツール")
 
-all_df = load_all_data()
+# メインタブの作成
+main_tab1, main_tab2 = st.tabs(["🥗 食事・PFC管理", "📈 体重・体脂肪トラッキング"])
 
-# 食事区分の選択
-meal_type = st.selectbox("食事区分を選択してください", ["朝食", "昼食", "夕食", "間食"])
+# ==========================================
+# タブ1：食事・PFC管理
+# ==========================================
+with main_tab1:
+    all_df = load_all_data()
 
-# 入力方法の選択
-input_options = ["テキスト入力", "画像アップロード", "カメラで撮影"]
+    meal_type = st.selectbox("食事区分を選択してください", ["朝食", "昼食", "夕食", "間食"])
 
-# 過去メニューが存在すれば選択肢に追加
-past_foods = []
-if not all_df.empty and "食事内容" in all_df.columns:
-    past_foods = [f for f in all_df["食事内容"].unique().tolist() if f]
-    if past_foods:
-        input_options.append("過去のメニューから選択")
+    input_options = ["テキスト入力", "画像アップロード", "カメラで撮影"]
 
-input_type = st.radio("入力方法を選択してください", input_options, horizontal=True)
+    past_foods = []
+    if not all_df.empty and "食事内容" in all_df.columns:
+        past_foods = [f for f in all_df["食事内容"].unique().tolist() if f]
+        if past_foods:
+            input_options.append("過去のメニューから選択")
 
-input_content = None
+    input_type = st.radio("入力方法を選択してください", input_options, horizontal=True)
 
-if input_type == "テキスト入力":
-    text_val = st.text_input("食事内容を入力（例: 鮭の塩焼き1切れ、白米200g）")
-    if text_val:
-        input_content = text_val
-elif input_type == "画像アップロード":
-    uploaded_file = st.file_uploader("食事写真をアップロード", type=["jpg", "jpeg", "png"])
-    if uploaded_file:
-        image = Image.open(uploaded_file)
-        st.image(image, caption="アップロード画像")
-        input_content = image
-elif input_type == "カメラで撮影":
-    camera_file = st.camera_input("食事を撮影してください")
-    if camera_file:
-        image = Image.open(camera_file)
-        st.image(image, caption="撮影した画像")
-        input_content = image
-elif input_type == "過去のメニューから選択":
-    selected_past_food = st.selectbox("過去に記録したメニューを選択", past_foods)
-    if selected_past_food:
-        input_content = selected_past_food
+    input_content = None
 
-if st.button("カロリー・PFCを計算する") and input_content:
-    with st.spinner("Geminiが解析中..."):
-        try:
-            res = analyze_nutrition(input_content, MY_API_KEY)
-            st.session_state["result"] = res
-        except Exception as e:
-            st.error(f"解析エラー: {e}")
+    if input_type == "テキスト入力":
+        text_val = st.text_input("食事内容を入力（例: 鮭の塩焼き1切れ、白米200g）")
+        if text_val:
+            input_content = text_val
+    elif input_type == "画像アップロード":
+        uploaded_file = st.file_uploader("食事写真をアップロード", type=["jpg", "jpeg", "png"])
+        if uploaded_file:
+            image = Image.open(uploaded_file)
+            st.image(image, caption="アップロード画像")
+            input_content = image
+    elif input_type == "カメラで撮影":
+        camera_file = st.camera_input("食事を撮影してください")
+        if camera_file:
+            image = Image.open(camera_file)
+            st.image(image, caption="撮影した画像")
+            input_content = image
+    elif input_type == "過去のメニューから選択":
+        selected_past_food = st.selectbox("過去に記録したメニューを選択", past_foods)
+        if selected_past_food:
+            input_content = selected_past_food
 
-if "result" in st.session_state:
-    res = st.session_state["result"]
-    st.subheader("解析結果")
-    st.write(f"**区分**: {meal_type}")
-    st.write(f"**メニュー**: {res['food_name']}")
-    
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("カロリー", f"{res['calories']} kcal")
-    col2.metric("タンパク質(P)", f"{res['protein_g']} g")
-    col3.metric("脂質(F)", f"{res['fat_g']} g")
-    col4.metric("炭水化物(C)", f"{res['carbs_g']} g")
+    if st.button("カロリー・PFCを計算する") and input_content:
+        with st.spinner("Geminiが解析中..."):
+            try:
+                res = analyze_nutrition(input_content, MY_API_KEY)
+                st.session_state["result"] = res
+            except Exception as e:
+                st.error(f"解析エラー: {e}")
 
-    if st.button("スプレッドシートに記録保存"):
-        save_to_spreadsheet(res, meal_type)
-        st.success("スプレッドシートへ書き込みました！")
-        del st.session_state["result"]
-        st.rerun()
-
-st.divider()
-
-# --- 本日の摂取記録 & 合計表示 ---
-st.subheader("📊 本日の摂取記録")
-
-if not all_df.empty:
-    JST = timezone(timedelta(hours=9))
-    today_str = datetime.now(JST).strftime("%Y-%m-%d")
-    today_df = all_df[all_df["日付"] == today_str] if "日付" in all_df.columns else pd.DataFrame()
-
-    if not today_df.empty:
-        st.dataframe(today_df, use_container_width=True)
+    if "result" in st.session_state:
+        res = st.session_state["result"]
+        st.subheader("解析結果")
+        st.write(f"**区分**: {meal_type}")
+        st.write(f"**メニュー**: {res['food_name']}")
         
-        c_sum = pd.to_numeric(today_df["カロリー"], errors="coerce").sum()
-        p_sum = pd.to_numeric(today_df["タンパク質"], errors="coerce").sum()
-        f_sum = pd.to_numeric(today_df["脂質"], errors="coerce").sum()
-        carbs_sum = pd.to_numeric(today_df["炭水化物"], errors="coerce").sum()
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("カロリー", f"{res['calories']} kcal")
+        col2.metric("タンパク質(P)", f"{res['protein_g']} g")
+        col3.metric("脂質(F)", f"{res['fat_g']} g")
+        col4.metric("炭水化物(C)", f"{res['carbs_g']} g")
 
-        st.write("### 本日の合計")
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("合計カロリー", f"{int(c_sum)} kcal")
-        m2.metric("合計 P", f"{round(p_sum, 1)} g")
-        m3.metric("合計 F", f"{round(f_sum, 1)} g")
-        m4.metric("合計 C", f"{round(carbs_sum, 1)} g")
-    else:
-        st.info("本日の記録はまだありません。")
+        if st.button("スプレッドシートに記録保存"):
+            save_to_spreadsheet(res, meal_type)
+            st.success("スプレッドシートへ書き込みました！")
+            del st.session_state["result"]
+            st.rerun()
 
     st.divider()
 
-    # --- 🛠️ 過去記録の修正・削除機能 ---
+    st.subheader("📊 本日の摂取記録")
+
+    if not all_df.empty:
+        JST = timezone(timedelta(hours=9))
+        today_str = datetime.now(JST).strftime("%Y-%m-%d")
+        today_df = all_df[all_df["日付"] == today_str] if "日付" in all_df.columns else pd.DataFrame()
+
+        if not today_df.empty:
+            st.dataframe(today_df, use_container_width=True)
+            
+            c_sum = pd.to_numeric(today_df["カロリー"], errors="coerce").sum()
+            p_sum = pd.to_numeric(today_df["タンパク質"], errors="coerce").sum()
+            f_sum = pd.to_numeric(today_df["脂質"], errors="coerce").sum()
+            carbs_sum = pd.to_numeric(today_df["炭水化物"], errors="coerce").sum()
+
+            st.write("### 本日の合計")
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("合計カロリー", f"{int(c_sum)} kcal")
+            m2.metric("合計 P", f"{round(p_sum, 1)} g")
+            m3.metric("合計 F", f"{round(f_sum, 1)} g")
+            m4.metric("合計 C", f"{round(carbs_sum, 1)} g")
+        else:
+            st.info("本日の記録はまだありません。")
+
+    st.divider()
+
     with st.expander("🛠️ 過去記録の修正・削除"):
         options = []
         for idx, row in all_df.iterrows():
@@ -233,7 +259,6 @@ if not all_df.empty:
                     st.success("記録を削除しました！")
                     st.rerun()
 
-    # --- 📅 過去の記録・日付別集計 ---
     st.divider()
     st.subheader("📅 過去の記録・日付別集計")
 
@@ -252,7 +277,7 @@ if not all_df.empty:
         
         summary_df["カロリー"] = summary_df["カロリー"].astype(int)
         summary_df["タンパク質"] = summary_df["タンパク質"].round(1)
-        summary_df["脂質"] = summary_df["脂質"].round(1)
+        summary_df["脂質"] = summary_df["脂質"].round(1) if "脂質" in summary_df.columns else summary_df["脂質"]
         summary_df["炭水化物"] = summary_df["炭水化物"].round(1)
         
         st.write("### 📊 日付別 合計一覧")
@@ -277,5 +302,65 @@ if not all_df.empty:
             sm2.metric("合計 P", f"{round(p_s, 1)} g")
             sm3.metric("合計 F", f"{round(f_s, 1)} g")
             sm4.metric("合計 C", f"{round(carbs_s, 1)} g")
-else:
-    st.info("データがまだありません。")
+        else:
+            st.info("データがまだありません。")
+
+# ==========================================
+# タブ2：体重・体脂肪トラッキング（Step 2 で追加）
+# ==========================================
+with main_tab2:
+    st.subheader("⚖️ 体重・体脂肪率の記録")
+    
+    JST = timezone(timedelta(hours=9))
+    today_str = datetime.now(JST).strftime("%Y-%m-%d")
+    
+    col_w1, col_w2, col_w3 = st.columns(3)
+    w_date = col_w1.text_input("日付", value=today_str)
+    w_weight = col_w2.number_input("体重 (kg)", min_value=30.0, max_value=200.0, value=70.0, step=0.1)
+    w_fat = col_w3.number_input("体脂肪率 (%)", min_value=3.0, max_value=50.0, value=15.0, step=0.1)
+
+    if st.button("体重データを記録保存"):
+        save_weight_data(w_date, w_weight, w_fat)
+        st.success(f"{w_date} のデータ（体重: {w_weight}kg / 体脂肪率: {w_fat}%）をスプレッドシートへ保存しました！")
+
+st.divider()
+st.subheader("📈 体重・体脂肪推移グラフ")
+
+weight_df = load_weight_data()
+
+if not weight_df.empty:
+        # 数値型へ変換
+        weight_df["体重"] = pd.to_numeric(weight_df["体重"], errors="coerce")
+        weight_df["体脂肪率"] = pd.to_numeric(weight_df["体脂肪率"], errors="coerce")
+        
+        # 日付列を本当の日付型(datetime)に変換（横向き表示になります）
+        weight_df["日付_dt"] = pd.to_datetime(weight_df["日付"], errors="coerce")
+        graph_df = weight_df.dropna(subset=["日付_dt"]).sort_values("日付_dt")
+
+        st.write("#### ⚖️ 体重推移 (kg)")
+        st.line_chart(graph_df, x="日付_dt", y="体重")
+
+        st.write("#### 💧 体脂肪率推移 (%)")
+        st.line_chart(graph_df, x="日付_dt", y="体脂肪率")
+
+        st.divider()
+        st.subheader("📋 体重記録一覧・削除")
+        st.dataframe(weight_df, use_container_width=True)
+
+        w_options = []
+        for idx, row in weight_df.iterrows():
+            w_label = f"[{row.get('日付', '')}] 体重: {row.get('体重', '')}kg / 体脂肪率: {row.get('体脂肪率', '')}%"
+            w_options.append((idx, w_label))
+
+        w_selected = st.selectbox(
+            "削除する体重記録を選択してください",
+            options=w_options,
+            format_func=lambda x: x[1]
+        )
+
+        if w_selected and st.button("選択した体重記録を削除"):
+            delete_weight_row(w_selected[0])
+            st.success("選択した記録を削除しました！")
+            st.rerun()
+        else:
+            st.info("体重・体脂肪の記録がまだありません。上のフォームから記録を追加してください。")
