@@ -43,14 +43,21 @@ def analyze_nutrition(input_data, api_key: str) -> dict:
 
 # --- 3. スプレッドシート操作関数 ---
 def get_spreadsheet():
-    try:
-        if "gcp_service_account" in st.secrets:
-            creds_dict = dict(st.secrets["gcp_service_account"])
-            gc = gspread.service_account_from_dict(creds_dict)
-        else:
-            gc = gspread.service_account(filename="credentials.json")
-    except Exception:
+    # クラウド環境（st.secrets）では一時ファイルを作成して安全に読み込む
+    if "GCP_JSON_TEXT" in st.secrets:
+        json_text = st.secrets["GCP_JSON_TEXT"]
+        with open("credentials_cloud.json", "w", encoding="utf-8") as f:
+            f.write(json_text)
+        gc = gspread.service_account(filename="credentials_cloud.json")
+    elif "gcp_service_account" in st.secrets:
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        if "private_key" in creds_dict:
+            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+        gc = gspread.service_account_from_dict(creds_dict)
+    else:
+        # ローカルPC環境では手元の credentials.json を使用
         gc = gspread.service_account(filename="credentials.json")
+        
     return gc.open_by_key(SPREADSHEET_ID)
 
 def get_worksheet():
