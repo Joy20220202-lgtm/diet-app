@@ -48,6 +48,7 @@ def get_spreadsheet():
     if hasattr(st, "secrets") and "GCP_JSON_TEXT" in st.secrets and st.secrets["GCP_JSON_TEXT"]:
         try:
             json_text = st.secrets["GCP_JSON_TEXT"]
+            # json.loads を介さず直接一時ファイルに書き出して安全に読み込み
             with open("credentials_cloud.json", "w", encoding="utf-8") as f:
                 f.write(json_text)
             return gspread.service_account(filename="credentials_cloud.json").open_by_key(SPREADSHEET_ID)
@@ -66,7 +67,7 @@ def get_spreadsheet():
             st.error(f"【Secrets 認証エラー (gcp_service_account)】: {e}")
             st.stop()
 
-    # 3. Secrets が空で、ローカルの credentials.json も存在しない場合（クラウド環境）
+    # 3. Secrets が空で、ローカルの credentials.json も存在しない場合
     if not os.path.exists("credentials.json"):
         st.error("🚨【原因確定】Streamlit Cloud の Secrets（設定）が空です！右下の 'Manage app' > 'Secrets' を開き、鍵の設定を入力して保存（Save）してください。")
         st.stop()
