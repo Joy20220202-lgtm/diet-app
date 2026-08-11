@@ -11,10 +11,12 @@ from google.genai import types
 from pydantic import BaseModel, Field
 
 # --- 設定項目 ---
+# ファイル冒頭の設定部分
 try:
-    MY_API_KEY = st.secrets.get("GEMINI_API_KEY", "AQ.Ab8RN6KZA_e6l-GreYHWYoZKZXPZVfEk3qwL2UehTQKBFBc4Og")
-    SPREADSHEET_ID = st.secrets.get("SPREADSHEET_ID", "1RPpypQ_UiiwNkTX923Q_c1suxMlS2DhvxkOvV0I98O8")
+    MY_API_KEY = st.secrets["GEMINI_API_KEY"]
+    SPREADSHEET_ID = st.secrets["SPREADSHEET_ID"]
 except Exception:
+    # ローカル実行時のフォールバック設定
     MY_API_KEY = "AQ.Ab8RN6KZA_e6l-GreYHWYoZKZXPZVfEk3qwL2UehTQKBFBc4Og"
     SPREADSHEET_ID = "1RPpypQ_UiiwNkTX923Q_c1suxMlS2DhvxkOvV0I98O8"
 
@@ -30,8 +32,13 @@ class NutritionData(BaseModel):
 def analyze_nutrition(input_data, api_key: str) -> dict:
     client = genai.Client(api_key=api_key)
     prompt = "提供された食事内容（テキストまたは画像）から、推定される総カロリー(kcal)とマクロ栄養素（タンパク質・脂質・炭水化物(g)）を計算してください。"
-    contents = [prompt, input_data]
-
+    
+    # 複数画像（リスト）が渡された場合は展開してGeminiに渡す
+    if isinstance(input_data, list):
+        contents = [prompt] + input_data
+    else:
+        contents = [prompt, input_data]
+        
     response = client.models.generate_content(
         model='gemini-flash-latest',
         contents=contents,
@@ -41,20 +48,26 @@ def analyze_nutrition(input_data, api_key: str) -> dict:
         ),
     )
     return json.loads(response.text)
-
 # --- 3. スプレッドシート操作関数 ---
 def get_spreadsheet():
-    # 1. Secrets に GCP_JSON_TEXT が存在する場合
-    if hasattr(st, "secrets") and "GCP_JSON_TEXT" in st.secrets and st.secrets["GCP_JSON_TEXT"]:
-        try:
+    # 1. クラウド環境（st.secrets が存在する場合）
+    try:
+        if "GCP_JSON_TEXT" in st.secrets and st.secrets["GCP_JSON_TEXT"]:
             json_text = st.secrets["GCP_JSON_TEXT"]
-            # json.loads を介さず直接一時ファイルに書き出して安全に読み込み
             with open("credentials_cloud.json", "w", encoding="utf-8") as f:
                 f.write(json_text)
             return gspread.service_account(filename="credentials_cloud.json").open_by_key(SPREADSHEET_ID)
-        except Exception as e:
-            st.error(f"【Secrets 認証エラー (GCP_JSON_TEXT)】: {e}")
-            st.stop()
+        elif "gcp_service_account" in st.secrets:
+            creds_dict = dict(st.secrets["gcp_service_account"])
+            if "private_key" in creds_dict:
+                creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+            return gspread.service_account_from_dict(creds_dict).open_by_key(SPREADSHEET_ID)
+    except Exception:
+        # ローカル環境（secrets.toml が無い場合）は例外を受け流す
+        pass
+        
+    # 2. ローカルPC環境（手元の credentials.json を使用）
+    return gspread.service_account(filename="credentials.json").open_by_key(SPREADSHEET_ID)
 
     # 2. Secrets に gcp_service_account が存在する場合
     if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
@@ -167,11 +180,14 @@ with main_tab1:
         if text_val:
             input_content = text_val
     elif input_type == "画像アップロード":
-        uploaded_file = st.file_uploader("食事写真をアップロード", type=["jpg", "jpeg", "png"])
-        if uploaded_file:
-            image = Image.open(uploaded_file)
-            st.image(image, caption="アップロード画像")
-            input_content = image
+        uploaded_files = st.file_uploader("食事写真をアップロード（複数選択可）", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
+        if uploaded_files:
+            images = [Image.open(file) for file in uploaded_files]
+            # アップロードされた画像を横並びで表示
+            cols = st.columns(min(len(images), 4))
+            for idx, img in enumerate(images):
+                cols[idx % 4].image(img, caption=f"写真 {idx+1}")
+            input_content = images
     elif input_type == "カメラで撮影":
         camera_file = st.camera_input("食事を撮影してください")
         if camera_file:
