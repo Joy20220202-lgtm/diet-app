@@ -307,11 +307,11 @@ with main_tab2:
     
     col_w1, col_w2, col_w3 = st.columns(3)
     w_date = col_w1.text_input("日付", value=today_str)
-    w_weight = col_w2.number_input("体重 (kg)", min_value=30.0, max_value=200.0, value=70.0, step=0.1)
-    w_fat = col_w3.number_input("体脂肪率 (%)", min_value=3.0, max_value=50.0, value=15.0, step=0.1)
+    w_weight = col_w2.number_input("体重 (kg)", min_value=50.0, max_value=80.0, value=65.0, step=0.1)
+    w_fat = col_w3.number_input("体脂肪率 (%)", min_value=10.0, max_value=30.0, value=20.0, step=0.1)
     
     col_w4, col_w5 = st.columns(2)
-    w_stool = col_w4.selectbox("便の状態", ["選択なし", "快便", "普通", "軟便", "便秘", "出なかった"])
+    w_stool = col_w4.selectbox("便の状態", ["選択なし", "快便", "普通", "下痢", "少なめ", "出なかった"])
     w_memo = col_w5.text_input("備考・メモ", value="", placeholder="例: 筋トレ脚の日、水分多め")
     
     if st.button("コンディションデータを記録保存"):
