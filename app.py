@@ -19,17 +19,41 @@ except Exception:
     SPREADSHEET_ID = "1RPpypQ_UiiwNkTX923Q_c1suxMlS2DhvxkOvV0I98O8"
 
 # --- 1. データ構造定義 ---
-class NutritionData(BaseModel):
-    food_name: str = Field(description="食事の名前やメニュー内容")
-    calories: int = Field(description="推定総カロリー(kcal)")
+# 食材ごとの内訳
+class FoodItemDetail(BaseModel):
+    name: str = Field(description="食材名・料理名")
+    portion: str = Field(description="推定分量（例: 200g, 1切れ, 1個など）")
+    calories: int = Field(description="カロリー(kcal)")
     protein_g: float = Field(description="タンパク質(g)")
     fat_g: float = Field(description="脂質(g)")
     carbs_g: float = Field(description="炭水化物(g)")
 
-# --- 2. Gemini API解析関数 ---
-def analyze_nutrition(input_data, api_key: str) -> dict:
+# 全体のデータ構造
+class NutritionData(BaseModel):
+    food_name: str = Field(description="食事全体の名前やメニュー内容")
+    calories: int = Field(description="推定総カロリー(kcal)")
+    protein_g: float = Field(description="タンパク質(g)")
+    fat_g: float = Field(description="脂質(g)")
+    carbs_g: float = Field(description="炭水化物(g)")
+    micro_notes: str = Field(description="食物繊維量(g)や、豊富に含まれる主要ビタミン・ミネラル等の栄養要約（例: 食物繊維 4.5g / ビタミンB群・D・鉄分が豊富）", default="")
+    items: list[FoodItemDetail] = Field(description="構成される各食材・料理ごとの推定内訳リスト", default=[])
+
+# --- 2. Gemini API解析関数（OCRモード対応） ---
+def analyze_nutrition(input_data, api_key: str, is_ocr: bool = False) -> dict:
     client = genai.Client(api_key=api_key)
-    prompt = "提供された食事内容（テキストまたは画像）から、推定される総カロリー(kcal)とマクロ栄養素（タンパク質・脂質・炭水化物(g)）を計算してください。"
+    
+    if is_ocr:
+        prompt = (
+            "提供された画像またはテキストは食品パッケージの「栄養成分表示」です。"
+            "印刷・記載されている商品名、カロリー/熱量(kcal)、タンパク質(g)、脂質(g)、炭水化物(g)、"
+            "および食物繊維や食塩相当量・ビタミンなどの記載をそのまま正確に読み取って抽出してください。"
+            "商品名が読み取れる場合はfood_nameに設定し、記載の数値を各項目に正確にセットしてください。"
+        )
+    else:
+        prompt = (
+            "提供された食事内容（テキストまたは画像）から、総カロリー(kcal)とPFC（タンパク質・脂質・炭水化物(g)）を計算してください。"
+            "また、食物繊維量(g)や主要ビタミン・ミネラルの特徴をmicro_notesにまとめ、各食材ごとの内訳（分量、カロリー、PFC）もitemsに分解して出力してください。"
+        )
     
     if isinstance(input_data, list):
         contents = [prompt] + input_data
@@ -46,6 +70,39 @@ def analyze_nutrition(input_data, api_key: str) -> dict:
     )
     return json.loads(response.text)
 
+# --- 今日の食事AIアドバイス生成関数（追加） ---
+def get_daily_advice(today_df: pd.DataFrame, targets: dict, c_sum: float, p_sum: float, f_sum: float, carbs_sum: float, api_key: str) -> str:
+    client = genai.Client(api_key=api_key)
+    
+    meal_lines = []
+    for _, row in today_df.iterrows():
+        meal_lines.append(f"- [{row.get('区分', '')}] {row.get('食事内容', '')} ({row.get('カロリー', 0)}kcal, P:{row.get('タンパク質', 0)}g, F:{row.get('脂質', 0)}g, C:{row.get('炭水化物', 0)}g)")
+    meals_text = "\n".join(meal_lines)
+    
+    prompt = f"""
+あなたは優秀なボディメイク専門の管理栄養士です。
+以下の本日の食事記録と目標値を分析し、
+1. 良かった点（PFCバランスや食材の質など）
+2. 今後の改善点・アドバイス（次の食事で補うべき栄養や注意点）
+を、分かりやすく簡潔に（200〜300文字程度で）アドバイスしてください。
+
+【本日の目標】
+- カロリー: {targets['cal']} kcal / タンパク質: {targets['p']} g / 脂質: {targets['f']} g / 炭水化物: {targets['c']} g
+
+【本日の摂取実績】
+- 合計カロリー: {int(c_sum)} kcal (目標差: {int(targets['cal'] - c_sum)} kcal)
+- タンパク質: {round(p_sum, 1)} g (目標差: {round(targets['p'] - p_sum, 1)} g)
+- 脂質: {round(f_sum, 1)} g (目標差: {round(targets['f'] - f_sum, 1)} g)
+- 炭水化物: {round(carbs_sum, 1)} g (目標差: {round(targets['c'] - carbs_sum, 1)} g)
+
+【本日の食事内容】
+{meals_text}
+"""
+    response = client.models.generate_content(
+        model='gemini-flash-latest',
+        contents=prompt
+    )
+    return response.text
 # --- 3. スプレッドシート操作関数 ---
 def get_spreadsheet():
     try:
@@ -90,7 +147,8 @@ def save_to_spreadsheet(data: dict, meal_type: str):
         data["calories"],
         data["protein_g"],
         data["fat_g"],
-        data["carbs_g"]
+        data["carbs_g"],
+        data.get("micro_notes", "")  # I列（備考・栄養メモ）
     ]
     ws.append_row(row)
 
@@ -100,15 +158,27 @@ def save_weight_data(date_str: str, weight: float, fat: float, stool: str, memo:
 
 def load_all_data():
     ws = get_worksheet()
-    records = ws.get_all_records()
-    if not records:
+    rows = ws.get_all_values()
+    if not rows or len(rows) <= 1:
         return pd.DataFrame()
-    return pd.DataFrame(records)
+    headers = [h if h != "" else f"_blank_{i}" for i, h in enumerate(rows[0])]
+    df = pd.DataFrame(rows[1:], columns=headers)
+    blank_cols = [c for c in df.columns if c.startswith("_blank_")]
+    if blank_cols:
+        df = df.drop(columns=blank_cols)
+    return df
 
 def load_weight_data():
     ws = get_weight_worksheet()
-    records = ws.get_all_records()
-    return pd.DataFrame(records) if records else pd.DataFrame()
+    rows = ws.get_all_values()
+    if not rows or len(rows) <= 1:
+        return pd.DataFrame()
+    headers = [h if h != "" else f"_blank_{i}" for i, h in enumerate(rows[0])]
+    df = pd.DataFrame(rows[1:], columns=headers)
+    blank_cols = [c for c in df.columns if c.startswith("_blank_")]
+    if blank_cols:
+        df = df.drop(columns=blank_cols)
+    return df
 
 def delete_spreadsheet_row(row_index: int):
     ws = get_worksheet()
@@ -118,22 +188,29 @@ def delete_weight_row(row_index: int):
     ws = get_weight_worksheet()
     ws.delete_rows(row_index + 2)
 
+def update_spreadsheet_row(row_index: int, updated_data: list):
+    ws = get_worksheet()
+    target_row = row_index + 2
+    cell_range = f"A{target_row}:I{target_row}"
+    ws.update(cell_range, [updated_data])
+
 def update_weight_row(row_index: int, updated_data: list):
     ws = get_weight_worksheet()
     target_row = row_index + 2
     cell_range = f"A{target_row}:E{target_row}"
     ws.update(cell_range, [updated_data])
 
-def update_spreadsheet_row(row_index: int, updated_data: list):
-    ws = get_worksheet()
-    target_row = row_index + 2
-    cell_range = f"A{target_row}:H{target_row}"
-    ws.update(cell_range, [updated_data])
-
 # --- 4. Streamlit UI 画面構築 ---
-st.set_page_config(page_title="ボディメイク＆コンディション管理", layout="centered")
-st.title("💪 ボディメイク＆コンディション管理")
-
+st.set_page_config(page_title="食事・体重管理", layout="centered")
+st.title("💪 食事・体重管理")
+# --- サイドバー：1日の目標PFC設定（追加） ---
+with st.sidebar:
+    st.header("🎯 1日の目標設定")
+    st.caption("増量期・減量期に合わせて目標値を調整できます。")
+    target_cal = st.number_input("目標カロリー (kcal)", min_value=1000, max_value=5000, value=2200, step=50, key="target_cal")
+    target_p = st.number_input("目標 タンパク質 (g)", min_value=0.0, max_value=300.0, value=140.0, step=5.0, key="target_p")
+    target_f = st.number_input("目標 脂質 (g)", min_value=0.0, max_value=200.0, value=50.0, step=5.0, key="target_f")
+    target_c = st.number_input("目標 炭水化物 (g)", min_value=0.0, max_value=600.0, value=280.0, step=10.0, key="target_c")
 main_tab1, main_tab2 = st.tabs(["🥗 食事・PFC管理", "📈 体重・コンディション記録"])
 
 # ==========================================
@@ -172,29 +249,46 @@ with main_tab1:
         selected_past_food = st.selectbox("過去に記録したメニューを選択", past_foods)
         if selected_past_food:
             input_content = selected_past_food
+    # OCR読み取りチェックボックス（追加）
+    is_ocr = st.checkbox("🏷️ パッケージ裏の「栄養成分表示」をそのまま読み取る", value=False, help="コンビニ商品やプロテイン等の成分表写真を正確に読み取ります。")
+
     if st.button("カロリー・PFCを計算する") and input_content:
         with st.spinner("Geminiが解析中..."):
             try:
-                res = analyze_nutrition(input_content, MY_API_KEY)
+                res = analyze_nutrition(input_content, MY_API_KEY, is_ocr=is_ocr)
                 st.session_state["result"] = res
             except Exception as e:
                 st.error(f"解析エラー: {e}")
+
     if "result" in st.session_state:
         res = st.session_state["result"]
         st.subheader("解析結果")
         st.write(f"**区分**: {meal_type}")
-        st.write(f"**メニュー**: {res['food_name']}")
+        st.write(f"**メニュー**: {res.get('food_name', '')}")
+        
+        # ミクロ栄養素・栄養メモの表示
+        if res.get("micro_notes"):
+            st.info(f"🌿 **栄養メモ**: {res['micro_notes']}")
         
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("カロリー", f"{res['calories']} kcal")
-        col2.metric("タンパク質(P)", f"{res['protein_g']} g")
-        col3.metric("脂質(F)", f"{res['fat_g']} g")
-        col4.metric("炭水化物(C)", f"{res['carbs_g']} g")
+        col1.metric("カロリー", f"{res.get('calories', 0)} kcal")
+        col2.metric("タンパク質(P)", f"{res.get('protein_g', 0.0)} g")
+        col3.metric("脂質(F)", f"{res.get('fat_g', 0.0)} g")
+        col4.metric("炭水化物(C)", f"{res.get('carbs_g', 0.0)} g")
+        
+        # 食材ごとの内訳（画面確認用アコーディオン）
+        if res.get("items"):
+            with st.expander("🔍 食材ごとの推定内訳を確認"):
+                item_df = pd.DataFrame(res["items"])
+                item_df.columns = ["食材・料理名", "推定分量", "カロリー(kcal)", "P(g)", "F(g)", "C(g)"]
+                st.dataframe(item_df, use_container_width=True)
+
         if st.button("スプレッドシートに記録保存"):
             save_to_spreadsheet(res, meal_type)
             st.success("スプレッドシートへ書き込みました！")
             del st.session_state["result"]
             st.rerun()
+
     st.divider()
     st.subheader("📊 本日の摂取記録")
     if not all_df.empty:
@@ -208,14 +302,67 @@ with main_tab1:
             p_sum = pd.to_numeric(today_df["タンパク質"], errors="coerce").sum()
             f_sum = pd.to_numeric(today_df["脂質"], errors="coerce").sum()
             carbs_sum = pd.to_numeric(today_df["炭水化物"], errors="coerce").sum()
-            st.write("### 本日の合計")
+            # 目標までの残り量を計算
+            rem_cal = int(target_cal - c_sum)
+            rem_p = round(target_p - p_sum, 1)
+            rem_f = round(target_f - f_sum, 1)
+            rem_c = round(target_c - carbs_sum, 1)
+
+            st.write("### 本日の合計（目標との差分）")
             m1, m2, m3, m4 = st.columns(4)
-            m1.metric("合計カロリー", f"{int(c_sum)} kcal")
-            m2.metric("合計 P", f"{round(p_sum, 1)} g")
-            m3.metric("合計 F", f"{round(f_sum, 1)} g")
-            m4.metric("合計 C", f"{round(carbs_sum, 1)} g")
+            m1.metric("合計カロリー", f"{int(c_sum)} kcal", f"残り {rem_cal} kcal", delta_color="normal" if rem_cal >= 0 else "inverse")
+            m2.metric("合計 P", f"{round(p_sum, 1)} g", f"残り {rem_p} g", delta_color="normal" if rem_p >= 0 else "inverse")
+            m3.metric("合計 F", f"{round(f_sum, 1)} g", f"残り {rem_f} g", delta_color="normal" if rem_f >= 0 else "inverse")
+            m4.metric("合計 C", f"{round(carbs_sum, 1)} g", f"残り {rem_c} g", delta_color="normal" if rem_c >= 0 else "inverse")
+            
+            # PFCエネルギー比率の計算と表示（追加）
+            p_cal, f_cal, c_cal = p_sum * 4, f_sum * 9, carbs_sum * 4
+            macro_total = p_cal + f_cal + c_cal
+            if macro_total > 0:
+                p_pct = round((p_cal / macro_total) * 100, 1)
+                f_pct = round((f_cal / macro_total) * 100, 1)
+                c_pct = round((c_cal / macro_total) * 100, 1)
+                st.caption(f"⚖️ **PFCエネルギー比率**: **P** {p_pct}% / **F** {f_pct}% / **C** {c_pct}%")
+            # --- 食事区分別の小計表示（追加） ---
+            if "区分" in today_df.columns:
+                meal_calc_df = today_df.copy()
+                for col in ["カロリー", "タンパク質", "脂質", "炭水化物"]:
+                    if col in meal_calc_df.columns:
+                        meal_calc_df[col] = pd.to_numeric(meal_calc_df[col], errors="coerce").fillna(0)
+                
+                meal_order = ["朝食", "昼食", "夕食", "間食"]
+                meal_summary = meal_calc_df.groupby("区分", as_index=False).agg({
+                    "カロリー": "sum",
+                    "タンパク質": "sum",
+                    "脂質": "sum",
+                    "炭水化物": "sum"
+                })
+                meal_summary["sort_key"] = meal_summary["区分"].map(lambda x: meal_order.index(x) if x in meal_order else 99)
+                meal_summary = meal_summary.sort_values("sort_key").drop(columns=["sort_key"])
+                
+                meal_summary["カロリー"] = meal_summary["カロリー"].astype(int)
+                meal_summary["タンパク質"] = meal_summary["タンパク質"].round(1)
+                meal_summary["脂質"] = meal_summary["脂質"].round(1)
+                meal_summary["炭水化物"] = meal_summary["炭水化物"].round(1)
+                
+                with st.expander("🍽️ 食事区分別の小計（朝・昼・夕・間食）を確認"):
+                    st.dataframe(meal_summary, use_container_width=True)
+                # --- 今日の食事AIアドバイス表示（追加） ---
+                st.write(" ")
+                if st.button("🤖 今日の食事をAIアドバイス・評価する", key="btn_ai_advice"):
+                    with st.spinner("Geminiが今日の食事バランスを分析中..."):
+                        try:
+                            targets = {"cal": target_cal, "p": target_p, "f": target_f, "c": target_c}
+                            advice_text = get_daily_advice(today_df, targets, c_sum, p_sum, f_sum, carbs_sum, MY_API_KEY)
+                            st.session_state["daily_advice"] = advice_text
+                        except Exception as e:
+                            st.error(f"アドバイス生成エラー: {e}")
+                
+                if "daily_advice" in st.session_state and st.session_state["daily_advice"]:
+                    st.info(f"💡 **AIアドバイザーからのアドバイス**:\n\n{st.session_state['daily_advice']}")
         else:
             st.info("本日の記録はまだありません。")
+
         st.divider()
         with st.expander("🛠️ 過去記録の修正・削除"):
             options = []
@@ -237,25 +384,29 @@ with main_tab1:
                 tab1, tab2 = st.tabs(["📝 内容を修正", "🗑️ 記録を削除"])
                 with tab1:
                     st.write("修正したい項目を変更して「修正内容を保存」を押してください。")
-                    edit_date = st.text_input("日付", value=str(selected_row.get("日付", "")))
-                    edit_time = st.text_input("時間", value=str(selected_row.get("時間", "")))
-                    edit_type = st.selectbox("区分", ["朝食", "昼食", "夕食", "間食"], index=["朝食", "昼食", "夕食", "間食"].index(selected_row.get("区分", "朝食")) if selected_row.get("区分") in ["朝食", "昼食", "夕食", "間食"] else 0)
-                    edit_food = st.text_input("食事内容", value=str(selected_row.get("食事内容", "")))
-                    edit_cal = st.number_input("カロリー(kcal)", value=int(selected_row.get("カロリー", 0)))
-                    edit_p = st.number_input("タンパク質(P/g)", value=float(selected_row.get("タンパク質", 0.0)))
-                    edit_f = st.number_input("脂質(F/g)", value=float(selected_row.get("脂質", 0.0)))
-                    edit_c = st.number_input("炭水化物(C/g)", value=float(selected_row.get("炭水化物", 0.0)))
-                    if st.button("修正内容を保存"):
-                        updated_list = [edit_date, edit_time, edit_type, edit_food, edit_cal, edit_p, edit_f, edit_c]
+                    edit_date = st.text_input("日付", value=str(selected_row.get("日付", "")), key="m_edit_date")
+                    edit_time = st.text_input("時間", value=str(selected_row.get("時間", "")), key="m_edit_time")
+                    edit_type = st.selectbox("区分", ["朝食", "昼食", "夕食", "間食"], index=["朝食", "昼食", "夕食", "間食"].index(selected_row.get("区分", "朝食")) if selected_row.get("区分") in ["朝食", "昼食", "夕食", "間食"] else 0, key="m_edit_type")
+                    edit_food = st.text_input("食事内容", value=str(selected_row.get("食事内容", "")), key="m_edit_food")
+                    edit_cal = st.number_input("カロリー(kcal)", value=int(pd.to_numeric(selected_row.get("カロリー", 0), errors="coerce") or 0), key="m_edit_cal")
+                    edit_p = st.number_input("タンパク質(P/g)", value=float(pd.to_numeric(selected_row.get("タンパク質", 0.0), errors="coerce") or 0.0), key="m_edit_p")
+                    edit_f = st.number_input("脂質(F/g)", value=float(pd.to_numeric(selected_row.get("脂質", 0.0), errors="coerce") or 0.0), key="m_edit_f")
+                    edit_c = st.number_input("炭水化物(C/g)", value=float(pd.to_numeric(selected_row.get("炭水化物", 0.0), errors="coerce") or 0.0), key="m_edit_c")
+                    edit_memo = st.text_input("備考（栄養メモ）", value=str(selected_row.get("備考", "")), key="m_edit_memo")
+                    
+                    if st.button("修正内容を保存", key="m_edit_btn"):
+                        updated_list = [edit_date, edit_time, edit_type, edit_food, edit_cal, edit_p, edit_f, edit_c, edit_memo]
                         update_spreadsheet_row(selected_idx, updated_list)
                         st.success("データを更新しました！")
                         st.rerun()
+
                 with tab2:
                     st.warning("⚠️ この操作は取り消せません。選択した記録を削除しますか？")
-                    if st.button("この記録を削除する", type="primary"):
+                    if st.button("この記録を削除する", type="primary", key="m_del_btn"):
                         delete_spreadsheet_row(selected_idx)
                         st.success("記録を削除しました！")
                         st.rerun()
+
         st.divider()
         st.subheader("📅 過去の記録・日付別集計")
         if "日付" in all_df.columns:
@@ -290,10 +441,10 @@ with main_tab1:
                 st.write(f"**{selected_date} の合計数値**")
                 sm1, sm2, sm3, sm4 = st.columns(4)
                 sm1.metric("合計カロリー", f"{int(c_s)} kcal")
-                sm2.metric("合計 P", f"{round(p_s, 1)} g")
-                sm3.metric("合計 F", f"{round(f_s, 1)} g")
-                sm4.metric("合計 C", f"{round(carbs_s, 1)} g")
-            else :
+                sm1.metric("合計 P", f"{round(p_s, 1)} g")
+                sm1.metric("合計 F", f"{round(f_s, 1)} g")
+                sm1.metric("合計 C", f"{round(carbs_s, 1)} g")
+            else:
                 st.info("データがまだありません。")
 
 # ==========================================
@@ -306,15 +457,15 @@ with main_tab2:
     today_str = datetime.now(JST).strftime("%Y-%m-%d")
     
     col_w1, col_w2, col_w3 = st.columns(3)
-    w_date = col_w1.text_input("日付", value=today_str)
-    w_weight = col_w2.number_input("体重 (kg)", min_value=50.0, max_value=80.0, value=65.0, step=0.1)
-    w_fat = col_w3.number_input("体脂肪率 (%)", min_value=10.0, max_value=30.0, value=20.0, step=0.1)
+    w_date = col_w1.text_input("日付", value=today_str, key="input_w_date")
+    w_weight = col_w2.number_input("体重 (kg)", min_value=30.0, max_value=200.0, value=70.0, step=0.1, key="input_w_weight")
+    w_fat = col_w3.number_input("体脂肪率 (%)", min_value=3.0, max_value=50.0, value=15.0, step=0.1, key="input_w_fat")
     
     col_w4, col_w5 = st.columns(2)
-    w_stool = col_w4.selectbox("便の状態", ["選択なし", "快便", "普通", "下痢", "少なめ", "出なかった"])
-    w_memo = col_w5.text_input("備考・メモ", value="", placeholder="例: 筋トレ脚の日、水分多め")
+    w_stool = col_w4.selectbox("便の状態", ["選択なし", "快便", "普通", "軟便", "便秘", "出なかった"], key="input_w_stool")
+    w_memo = col_w5.text_input("備考・メモ", value="", placeholder="例: 筋トレ脚の日、水分多め", key="input_w_memo")
     
-    if st.button("コンディションデータを記録保存"):
+    if st.button("コンディションデータを記録保存", key="btn_save_weight"):
         save_weight_data(w_date, w_weight, w_fat, w_stool, w_memo)
         st.success(f"{w_date} のデータ（体重: {w_weight}kg / 便: {w_stool}）を保存しました！")
         st.rerun()
@@ -332,6 +483,7 @@ with main_tab2:
         st.line_chart(graph_df, x="日付_dt", y="体重")
         st.write("#### 💧 体脂肪率推移 (%)")
         st.line_chart(graph_df, x="日付_dt", y="体脂肪率")
+        
         st.divider()
         st.subheader("🛠️ コンディション記録の修正・削除")
         st.dataframe(weight_df, use_container_width=True)
@@ -345,7 +497,8 @@ with main_tab2:
         w_selected_option = st.selectbox(
             "操作するコンディション記録を選択してください",
             options=w_options,
-            format_func=lambda x: x[1]
+            format_func=lambda x: x[1],
+            key="select_weight_record"
         )
         
         if w_selected_option:
@@ -357,8 +510,8 @@ with main_tab2:
             with w_tab1:
                 st.write("修正したい項目を変更して「修正内容を保存」を押してください。")
                 w_edit_date = st.text_input("日付", value=str(w_selected_row.get("日付", "")), key="w_edit_date")
-                w_edit_weight = st.number_input("体重 (kg)", value=float(w_selected_row.get("体重", 70.0)), step=0.1, key="w_edit_weight")
-                w_edit_fat = st.number_input("体脂肪率 (%)", value=float(w_selected_row.get("体脂肪率", 15.0)), step=0.1, key="w_edit_fat")
+                w_edit_weight = st.number_input("体重 (kg)", value=float(pd.to_numeric(w_selected_row.get("体重", 70.0), errors="coerce") or 70.0), step=0.1, key="w_edit_weight")
+                w_edit_fat = st.number_input("体脂肪率 (%)", value=float(pd.to_numeric(w_selected_row.get("体脂肪率", 15.0), errors="coerce") or 15.0), step=0.1, key="w_edit_fat")
                 
                 stool_list = ["選択なし", "快便", "普通", "軟便", "便秘", "出なかった"]
                 current_stool = str(w_selected_row.get("便の状態", "選択なし"))
@@ -379,3 +532,5 @@ with main_tab2:
                     delete_weight_row(w_selected_idx)
                     st.success("記録を削除しました！")
                     st.rerun()
+    else:
+        st.info("コンディション記録がまだありません。上のフォームから記録を追加してください。")
