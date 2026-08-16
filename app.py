@@ -150,11 +150,13 @@ def load_target_data() -> dict:
         ws = get_target_worksheet()
         rows = ws.get_all_values()
         if len(rows) >= 2:
+            # 2行目（インデックス1）の目標値データを確実に取得
+            target_vals = rows
             return {
-                "cal": int(pd.to_numeric(rows[0], errors="coerce") or 2200),
-                "p": float(pd.to_numeric(rows, errors="coerce") or 140.0),
-                "f": float(pd.to_numeric(rows, errors="coerce") or 50.0),
-                "c": float(pd.to_numeric(rows, errors="coerce") or 280.0)
+                "cal": int(pd.to_numeric(target_vals[0], errors="coerce") or 2200),
+                "p": float(pd.to_numeric(target_vals[1], errors="coerce") or 140.0),
+                "f": float(pd.to_numeric(target_vals[2], errors="coerce") or 50.0),
+                "c": float(pd.to_numeric(target_vals[3], errors="coerce") or 280.0)
             }
     except Exception:
         pass
