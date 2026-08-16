@@ -420,9 +420,10 @@ with main_tab1:
             st.image(image, caption="撮影した画像")
             input_content = image
     elif input_type == "過去のメニューから選択":
-        selected_past_food = st.selectbox("過去に記録したメニューを選択", past_foods)
-        if selected_past_food:
-            input_content = selected_past_food
+        selected_past_foods = st.multiselect("過去に記録したメニューを選択（複数選択可）", past_foods, placeholder="メニューを選択してください")
+        if selected_past_foods:
+            # 選択された複数のメニューを「、」で繋げて1つの入力にする
+            input_content = "、".join(selected_past_foods)
     # OCR読み取りチェックボックス（追加）
     is_ocr = st.checkbox("🏷️ パッケージ裏の「栄養成分表示」をそのまま読み取る", value=False, help="コンビニ商品やプロテイン等の成分表写真を正確に読み取ります。")
 
