@@ -142,7 +142,7 @@ def get_target_worksheet():
     except gspread.exceptions.WorksheetNotFound:
         ws = sh.add_worksheet(title="目標設定", rows=5, cols=4)
         ws.append_row(["カロリー", "タンパク質", "脂質", "炭水化物"])
-        ws.append_row([2200, 140.0, 50.0, 280.0])  # デフォルト値
+        ws.append_row([2350, 141.0, 62.7, 305.0])  # デフォルト値
         return ws
 
 def load_target_data() -> dict:
