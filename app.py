@@ -233,14 +233,149 @@ def update_weight_row(row_index: int, updated_data: list):
     ws.update(cell_range, [updated_data])
 
 # --- 4. Streamlit UI 画面構築 ---
-st.set_page_config(page_title="食事・体重管理", layout="centered")
-st.title("💪 食事・体重管理")
+st.set_page_config(page_title="食事・体重管理", layout="centered", page_icon="💪")
+
+st.markdown("""
+<style>
+    /* 全体背景・フォント（明るい背景＋水色系） */
+    .stApp {
+        background: linear-gradient(180deg, #f4fbfd 0%, #eaf6f9 100%);
+        color: #1b2b34;
+    }
+
+    /* メインタイトル */
+    .app-header {
+        text-align: center;
+        padding: 1.2rem 0 1.5rem 0;
+        border-bottom: 1px solid #bfe3ec;
+        margin-bottom: 1.5rem;
+    }
+    .app-header h1 {
+        font-size: 1.9rem;
+        font-weight: 800;
+        letter-spacing: 0.02em;
+        color: #0891b2;
+        margin: 0;
+    }
+    .app-header p {
+        color: #4b6a75;
+        font-size: 0.85rem;
+        margin-top: 0.2rem;
+    }
+
+    /* サイドバー */
+    section[data-testid="stSidebar"] {
+        background-color: #eaf6f9;
+        border-right: 1px solid #bfe3ec;
+    }
+    section[data-testid="stSidebar"] * {
+        color: #1b2b34;
+    }
+
+    /* metric カード風装飾 */
+    div[data-testid="stMetric"] {
+        background-color: #ffffff;
+        border: 1px solid #bfe3ec;
+        border-radius: 12px;
+        padding: 0.9rem 0.7rem;
+        box-shadow: 0 2px 6px rgba(8, 145, 178, 0.08);
+    }
+    div[data-testid="stMetricValue"] {
+        color: #0891b2;
+        font-weight: 700;
+    }
+    div[data-testid="stMetricLabel"] {
+        color: #4b6a75;
+    }
+
+    /* 見出し類（st.subheader / st.write ### など） */
+    h1, h2, h3, h4, h5, h6 {
+        color: #0e7490;
+    }
+
+    /* 通常テキスト・キャプション */
+    p, span, label, .stMarkdown, .stCaption {
+        color: #1b2b34;
+    }
+
+    /* ボタン */
+    div.stButton > button {
+        border-radius: 10px;
+        border: 1px solid #0891b2;
+        color: #0891b2;
+        background-color: #ffffff;
+        font-weight: 600;
+        transition: all 0.2s ease;
+    }
+    div.stButton > button:hover {
+        background-color: #0891b2;
+        color: #ffffff;
+        border-color: #0891b2;
+    }
+    div.stButton > button[kind="primary"] {
+        background-color: #0e7490;
+        border-color: #0e7490;
+        color: #fff;
+    }
+    div.stButton > button[kind="primary"]:hover {
+        background-color: #0891b2;
+    }
+
+    /* タブ */
+    button[data-baseweb="tab"] {
+        font-weight: 600;
+        color: #4b6a75;
+    }
+    button[data-baseweb="tab"][aria-selected="true"] {
+        color: #0891b2;
+    }
+    div[data-baseweb="tab-highlight"] {
+        background-color: #0891b2;
+    }
+
+    /* expander */
+    details {
+        background-color: #ffffff;
+        border: 1px solid #bfe3ec;
+        border-radius: 10px;
+    }
+    details summary {
+        color: #1b2b34;
+    }
+
+    /* info / success ボックス（Streamlit標準の配色を活かしつつ角丸だけ） */
+    div[data-testid="stAlert"] {
+        border-radius: 10px;
+    }
+
+    /* dataframe */
+    div[data-testid="stDataFrame"] {
+        border-radius: 10px;
+        overflow: hidden;
+        border: 1px solid #bfe3ec;
+    }
+
+    /* input, selectbox, number_input などの枠 */
+    div[data-baseweb="input"], div[data-baseweb="select"] {
+        border-color: #bfe3ec !important;
+    }
+</style>
+
+<div class="app-header">
+    <h1>💪 食事・体重管理</h1>
+    <p>Nutrition & Body Composition Tracker</p>
+</div>
+""", unsafe_allow_html=True)
 # --- サイドバー：1日の目標PFC設定（追加） ---
 # --- サイドバー：1日の目標PFC設定（自動読み込み・保存対応） ---
 targets_saved = load_target_data()
 
 with st.sidebar:
-    st.header("🎯 1日の目標設定")
+    st.markdown("""
+    <div style="padding-bottom:0.5rem;">
+        <span style="font-size:1.1rem; font-weight:700; color:#0891b2;">🎯 1日の目標設定</span>
+    </div>
+    """, unsafe_allow_html=True)
     st.caption("数値を変更して「目標値を保存」を押すと、リロード後もこの設定が維持されます。")
     target_cal = st.number_input("目標カロリー (kcal)", min_value=1000, max_value=5000, value=targets_saved["cal"], step=50, key="target_cal")
     target_p = st.number_input("目標 タンパク質 (g)", min_value=0.0, max_value=300.0, value=targets_saved["p"], step=5.0, key="target_p")
@@ -251,7 +386,7 @@ with st.sidebar:
         save_target_data(target_cal, target_p, target_f, target_c)
         st.success("目標値をスプレッドシートに保存しました！")
     
-main_tab1, main_tab2 = st.tabs(["🥗 食事・PFC管理", "📈 体重・コンディション記録"])
+main_tab1, main_tab2 = st.tabs(["  🥗 食事・PFC管理  ", "  📈 体重・コンディション記録  "])
 # ==========================================
 # タブ1：食事・PFC管理
 # ==========================================
