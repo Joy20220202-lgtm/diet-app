@@ -134,6 +134,36 @@ def get_weight_worksheet():
         ws.append_row(["日付", "体重", "体脂肪率", "便の状態", "備考"])
         return ws
 
+# --- 目標設定シート操作関数（追加） ---
+def get_target_worksheet():
+    sh = get_spreadsheet()
+    try:
+        return sh.worksheet("目標設定")
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet(title="目標設定", rows=5, cols=4)
+        ws.append_row(["カロリー", "タンパク質", "脂質", "炭水化物"])
+        ws.append_row([2200, 140.0, 50.0, 280.0])  # デフォルト値
+        return ws
+
+def load_target_data() -> dict:
+    try:
+        ws = get_target_worksheet()
+        rows = ws.get_all_values()
+        if len(rows) >= 2:
+            return {
+                "cal": int(pd.to_numeric(rows[0], errors="coerce") or 2200),
+                "p": float(pd.to_numeric(rows, errors="coerce") or 140.0),
+                "f": float(pd.to_numeric(rows, errors="coerce") or 50.0),
+                "c": float(pd.to_numeric(rows, errors="coerce") or 280.0)
+            }
+    except Exception:
+        pass
+    return {"cal": 2200, "p": 140.0, "f": 50.0, "c": 280.0}
+
+def save_target_data(cal: int, p: float, f: float, c: float):
+    ws = get_target_worksheet()
+    ws.update("A2:D2", [[cal, p, f, c]])
+
 def save_to_spreadsheet(data: dict, meal_type: str):
     ws = get_worksheet()
     JST = timezone(timedelta(hours=9))
@@ -204,15 +234,22 @@ def update_weight_row(row_index: int, updated_data: list):
 st.set_page_config(page_title="食事・体重管理", layout="centered")
 st.title("💪 食事・体重管理")
 # --- サイドバー：1日の目標PFC設定（追加） ---
+# --- サイドバー：1日の目標PFC設定（自動読み込み・保存対応） ---
+targets_saved = load_target_data()
+
 with st.sidebar:
     st.header("🎯 1日の目標設定")
-    st.caption("増量期・減量期に合わせて目標値を調整できます。")
-    target_cal = st.number_input("目標カロリー (kcal)", min_value=1000, max_value=5000, value=2200, step=50, key="target_cal")
-    target_p = st.number_input("目標 タンパク質 (g)", min_value=0.0, max_value=300.0, value=140.0, step=5.0, key="target_p")
-    target_f = st.number_input("目標 脂質 (g)", min_value=0.0, max_value=200.0, value=50.0, step=5.0, key="target_f")
-    target_c = st.number_input("目標 炭水化物 (g)", min_value=0.0, max_value=600.0, value=280.0, step=10.0, key="target_c")
+    st.caption("数値を変更して「目標値を保存」を押すと、リロード後もこの設定が維持されます。")
+    target_cal = st.number_input("目標カロリー (kcal)", min_value=1000, max_value=5000, value=targets_saved["cal"], step=50, key="target_cal")
+    target_p = st.number_input("目標 タンパク質 (g)", min_value=0.0, max_value=300.0, value=targets_saved["p"], step=5.0, key="target_p")
+    target_f = st.number_input("目標 脂質 (g)", min_value=0.0, max_value=200.0, value=targets_saved["f"], step=5.0, key="target_f")
+    target_c = st.number_input("目標 炭水化物 (g)", min_value=0.0, max_value=600.0, value=targets_saved["c"], step=10.0, key="target_c")
+    
+    if st.button("💾 この目標値を保存する", key="btn_save_target"):
+        save_target_data(target_cal, target_p, target_f, target_c)
+        st.success("目標値をスプレッドシートに保存しました！")
+    
 main_tab1, main_tab2 = st.tabs(["🥗 食事・PFC管理", "📈 体重・コンディション記録"])
-
 # ==========================================
 # タブ1：食事・PFC管理
 # ==========================================
