@@ -104,6 +104,7 @@ def get_daily_advice(today_df: pd.DataFrame, targets: dict, c_sum: float, p_sum:
     )
     return response.text
 # --- 3. スプレッドシート操作関数 ---
+# --- 3. スプレッドシート操作関数（キャッシュ最適化版） ---
 def get_spreadsheet():
     try:
         if "GCP_JSON_TEXT" in st.secrets and st.secrets["GCP_JSON_TEXT"]:
@@ -134,7 +135,6 @@ def get_weight_worksheet():
         ws.append_row(["日付", "体重", "体脂肪率", "便の状態", "備考"])
         return ws
 
-# --- 目標設定シート操作関数（追加） ---
 def get_target_worksheet():
     sh = get_spreadsheet()
     try:
@@ -142,30 +142,56 @@ def get_target_worksheet():
     except gspread.exceptions.WorksheetNotFound:
         ws = sh.add_worksheet(title="目標設定", rows=5, cols=4)
         ws.append_row(["カロリー", "タンパク質", "脂質", "炭水化物"])
-        ws.append_row([2350, 141.0, 62.7, 305.0])  # デフォルト値
+        ws.append_row([2350, 141.0, 62.7, 305.5])
         return ws
 
+# --- キャッシュ付きデータ読み込み関数（60秒間通信をスキップして高速化） ---
+@st.cache_data(ttl=60)
+def load_all_data():
+    ws = get_worksheet()
+    rows = ws.get_all_values()
+    if not rows or len(rows) <= 1:
+        return pd.DataFrame()
+    headers = [h if h != "" else f"_blank_{i}" for i, h in enumerate(rows[0])]
+    df = pd.DataFrame(rows[1:], columns=headers)
+    blank_cols = [c for c in df.columns if c.startswith("_blank_")]
+    if blank_cols:
+        df = df.drop(columns=blank_cols)
+    return df
+
+@st.cache_data(ttl=60)
+def load_weight_data():
+    ws = get_weight_worksheet()
+    rows = ws.get_all_values()
+    if not rows or len(rows) <= 1:
+        return pd.DataFrame()
+    headers = [h if h != "" else f"_blank_{i}" for i, h in enumerate(rows[0])]
+    df = pd.DataFrame(rows[1:], columns=headers)
+    blank_cols = [c for c in df.columns if c.startswith("_blank_")]
+    if blank_cols:
+        df = df.drop(columns=blank_cols)
+    return df
+
+@st.cache_data(ttl=300)
 def load_target_data() -> dict:
     try:
         ws = get_target_worksheet()
         rows = ws.get_all_values()
         if len(rows) >= 2:
-            # 2行目（インデックス1）の目標値データを確実に取得
-            target_vals = rows
+            rows.pop(0)
+            target_row = rows.pop(0)
+            cal_str, p_str, f_str, c_str = target_row[:4]
             return {
-                "cal": int(pd.to_numeric(target_vals[0], errors="coerce") or 2350),
-                "p": float(pd.to_numeric(target_vals[1], errors="coerce") or 141.0),
-                "f": float(pd.to_numeric(target_vals[2], errors="coerce") or 62.7),
-                "c": float(pd.to_numeric(target_vals[3], errors="coerce") or 305.5)
+                "cal": int(pd.to_numeric(cal_str, errors="coerce") or 2350),
+                "p": float(pd.to_numeric(p_str, errors="coerce") or 141.0),
+                "f": float(pd.to_numeric(f_str, errors="coerce") or 62.7),
+                "c": float(pd.to_numeric(c_str, errors="coerce") or 305.5)
             }
     except Exception:
         pass
     return {"cal": 2350, "p": 141.0, "f": 62.7, "c": 305.5}
 
-def save_target_data(cal: int, p: float, f: float, c: float):
-    ws = get_target_worksheet()
-    ws.update("A2:D2", [[cal, p, f, c]])
-
+# --- 保存・更新・削除関数（変更時にキャッシュを自動クリア） ---
 def save_to_spreadsheet(data: dict, meal_type: str):
     ws = get_worksheet()
     JST = timezone(timedelta(hours=9))
@@ -180,58 +206,44 @@ def save_to_spreadsheet(data: dict, meal_type: str):
         data["protein_g"],
         data["fat_g"],
         data["carbs_g"],
-        data.get("micro_notes", "")  # I列（備考・栄養メモ）
+        data.get("micro_notes", "")
     ]
     ws.append_row(row)
+    st.cache_data.clear()
 
 def save_weight_data(date_str: str, weight: float, fat: float, stool: str, memo: str):
     ws = get_weight_worksheet()
     ws.append_row([date_str, weight, fat, stool, memo])
+    st.cache_data.clear()
 
-def load_all_data():
-    ws = get_worksheet()
-    rows = ws.get_all_values()
-    if not rows or len(rows) <= 1:
-        return pd.DataFrame()
-    headers = [h if h != "" else f"_blank_{i}" for i, h in enumerate(rows[0])]
-    df = pd.DataFrame(rows[1:], columns=headers)
-    blank_cols = [c for c in df.columns if c.startswith("_blank_")]
-    if blank_cols:
-        df = df.drop(columns=blank_cols)
-    return df
-
-def load_weight_data():
-    ws = get_weight_worksheet()
-    rows = ws.get_all_values()
-    if not rows or len(rows) <= 1:
-        return pd.DataFrame()
-    headers = [h if h != "" else f"_blank_{i}" for i, h in enumerate(rows[0])]
-    df = pd.DataFrame(rows[1:], columns=headers)
-    blank_cols = [c for c in df.columns if c.startswith("_blank_")]
-    if blank_cols:
-        df = df.drop(columns=blank_cols)
-    return df
+def save_target_data(cal: int, p: float, f: float, c: float):
+    ws = get_target_worksheet()
+    ws.update("A2:D2", [[cal, p, f, c]])
+    st.cache_data.clear()
 
 def delete_spreadsheet_row(row_index: int):
     ws = get_worksheet()
     ws.delete_rows(row_index + 2)
+    st.cache_data.clear()
 
 def delete_weight_row(row_index: int):
     ws = get_weight_worksheet()
     ws.delete_rows(row_index + 2)
+    st.cache_data.clear()
 
 def update_spreadsheet_row(row_index: int, updated_data: list):
     ws = get_worksheet()
     target_row = row_index + 2
     cell_range = f"A{target_row}:I{target_row}"
     ws.update(cell_range, [updated_data])
+    st.cache_data.clear()
 
 def update_weight_row(row_index: int, updated_data: list):
     ws = get_weight_worksheet()
     target_row = row_index + 2
     cell_range = f"A{target_row}:E{target_row}"
     ws.update(cell_range, [updated_data])
-
+    st.cache_data.clear()
 # --- 4. Streamlit UI 画面構築 ---
 st.set_page_config(page_title="食事・体重管理", layout="centered", page_icon="💪")
 
