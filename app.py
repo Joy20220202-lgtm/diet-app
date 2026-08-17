@@ -142,7 +142,7 @@ def get_target_worksheet():
     except gspread.exceptions.WorksheetNotFound:
         ws = sh.add_worksheet(title="目標設定", rows=5, cols=4)
         ws.append_row(["カロリー", "タンパク質", "脂質", "炭水化物"])
-        ws.append_row([2350, 141.0, 62.7, 305.5])
+        ws.append_row([2350, 141.0, 54.8, 323.1])
         return ws
 
 # --- キャッシュ付きデータ読み込み関数（60秒間通信をスキップして高速化） ---
@@ -184,12 +184,12 @@ def load_target_data() -> dict:
             return {
                 "cal": int(pd.to_numeric(cal_str, errors="coerce") or 2350),
                 "p": float(pd.to_numeric(p_str, errors="coerce") or 141.0),
-                "f": float(pd.to_numeric(f_str, errors="coerce") or 62.7),
-                "c": float(pd.to_numeric(c_str, errors="coerce") or 305.5)
+                "f": float(pd.to_numeric(f_str, errors="coerce") or 54.8),
+                "c": float(pd.to_numeric(c_str, errors="coerce") or 323.1)
             }
     except Exception:
         pass
-    return {"cal": 2350, "p": 141.0, "f": 62.7, "c": 305.5}
+    return {"cal": 2350, "p": 141.0, "f": 54.8, "c": 323.1}
 
 # --- 保存・更新・削除関数（変更時にキャッシュを自動クリア） ---
 def save_to_spreadsheet(data: dict, meal_type: str):
@@ -616,31 +616,37 @@ with main_tab1:
                 selected_idx = selected_option[0]
                 selected_row = all_df.loc[selected_idx]
                 tab1, tab2 = st.tabs(["📝 内容を修正", "🗑️ 記録を削除"])
+                
                 with tab1:
                     st.write("修正したい項目を変更して「修正内容を保存」を押してください。")
-                    edit_date = st.text_input("日付", value=str(selected_row.get("日付", "")), key="m_edit_date")
-                    edit_time = st.text_input("時間", value=str(selected_row.get("時間", "")), key="m_edit_time")
-                    edit_type = st.selectbox("区分", ["朝食", "昼食", "夕食", "間食"], index=["朝食", "昼食", "夕食", "間食"].index(selected_row.get("区分", "朝食")) if selected_row.get("区分") in ["朝食", "昼食", "夕食", "間食"] else 0, key="m_edit_type")
-                    edit_food = st.text_input("食事内容", value=str(selected_row.get("食事内容", "")), key="m_edit_food")
-                    edit_cal = st.number_input("カロリー(kcal)", value=int(pd.to_numeric(selected_row.get("カロリー", 0), errors="coerce") or 0), key="m_edit_cal")
-                    edit_p = st.number_input("タンパク質(P/g)", value=float(pd.to_numeric(selected_row.get("タンパク質", 0.0), errors="coerce") or 0.0), key="m_edit_p")
-                    edit_f = st.number_input("脂質(F/g)", value=float(pd.to_numeric(selected_row.get("脂質", 0.0), errors="coerce") or 0.0), key="m_edit_f")
-                    edit_c = st.number_input("炭水化物(C/g)", value=float(pd.to_numeric(selected_row.get("炭水化物", 0.0), errors="coerce") or 0.0), key="m_edit_c")
-                    edit_memo = st.text_input("備考（栄養メモ）", value=str(selected_row.get("備考", "")), key="m_edit_memo")
+                    # 各入力欄の key に selected_idx を付与して選択内容を確実に反映
+                    edit_date = st.text_input("日付", value=str(selected_row.get("日付", "")), key=f"edit_date_{selected_idx}")
+                    edit_time = st.text_input("時間", value=str(selected_row.get("時間", "")), key=f"edit_time_{selected_idx}")
                     
-                    if st.button("修正内容を保存", key="m_edit_btn"):
-                        updated_list = [edit_date, edit_time, edit_type, edit_food, edit_cal, edit_p, edit_f, edit_c, edit_memo]
+                    meal_types = ["朝食", "昼食", "夕食", "間食"]
+                    current_type = selected_row.get("区分", "朝食")
+                    type_idx = meal_types.index(current_type) if current_type in meal_types else 0
+                    edit_type = st.selectbox("区分", meal_types, index=type_idx, key=f"edit_type_{selected_idx}")
+                    
+                    edit_food = st.text_input("食事内容", value=str(selected_row.get("食事内容", "")), key=f"edit_food_{selected_idx}")
+                    edit_cal = st.number_input("カロリー(kcal)", value=int(pd.to_numeric(selected_row.get("カロリー", 0), errors="coerce") or 0), key=f"edit_cal_{selected_idx}")
+                    edit_p = st.number_input("タンパク質(P/g)", value=float(pd.to_numeric(selected_row.get("タンパク質", 0.0), errors="coerce") or 0.0), step=0.1, key=f"edit_p_{selected_idx}")
+                    edit_f = st.number_input("脂質(F/g)", value=float(pd.to_numeric(selected_row.get("脂質", 0.0), errors="coerce") or 0.0), step=0.1, key=f"edit_f_{selected_idx}")
+                    edit_c = st.number_input("炭水化物(C/g)", value=float(pd.to_numeric(selected_row.get("炭水化物", 0.0), errors="coerce") or 0.0), step=0.1, key=f"edit_c_{selected_idx}")
+                    edit_notes = st.text_input("備考（栄養メモ）", value=str(selected_row.get("備考", "")), key=f"edit_notes_{selected_idx}")
+                    
+                    if st.button("修正内容を保存", key=f"btn_save_edit_{selected_idx}"):
+                        updated_list = [edit_date, edit_time, edit_type, edit_food, edit_cal, edit_p, edit_f, edit_c, edit_notes]
                         update_spreadsheet_row(selected_idx, updated_list)
                         st.success("データを更新しました！")
                         st.rerun()
-
+                        
                 with tab2:
                     st.warning("⚠️ この操作は取り消せません。選択した記録を削除しますか？")
-                    if st.button("この記録を削除する", type="primary", key="m_del_btn"):
+                    if st.button("この記録を削除する", type="primary", key=f"btn_del_meal_{selected_idx}"):
                         delete_spreadsheet_row(selected_idx)
                         st.success("記録を削除しました！")
                         st.rerun()
-
         st.divider()
         st.subheader("📅 過去の記録・日付別集計")
         if "日付" in all_df.columns:
@@ -731,8 +737,7 @@ with main_tab2:
         w_selected_option = st.selectbox(
             "操作するコンディション記録を選択してください",
             options=w_options,
-            format_func=lambda x: x[1],
-            key="select_weight_record"
+            format_func=lambda x: x[1]
         )
         
         if w_selected_option:
@@ -743,18 +748,18 @@ with main_tab2:
             
             with w_tab1:
                 st.write("修正したい項目を変更して「修正内容を保存」を押してください。")
-                w_edit_date = st.text_input("日付", value=str(w_selected_row.get("日付", "")), key="w_edit_date")
-                w_edit_weight = st.number_input("体重 (kg)", value=float(pd.to_numeric(w_selected_row.get("体重", 70.0), errors="coerce") or 70.0), step=0.1, key="w_edit_weight")
-                w_edit_fat = st.number_input("体脂肪率 (%)", value=float(pd.to_numeric(w_selected_row.get("体脂肪率", 15.0), errors="coerce") or 15.0), step=0.1, key="w_edit_fat")
+                w_edit_date = st.text_input("日付", value=str(w_selected_row.get("日付", "")), key=f"w_edit_date_{w_selected_idx}")
+                w_edit_weight = st.number_input("体重 (kg)", value=float(pd.to_numeric(w_selected_row.get("体重", 70.0), errors="coerce") or 70.0), step=0.1, key=f"w_edit_weight_{w_selected_idx}")
+                w_edit_fat = st.number_input("体脂肪率 (%)", value=float(pd.to_numeric(w_selected_row.get("体脂肪率", 15.0), errors="coerce") or 15.0), step=0.1, key=f"w_edit_fat_{w_selected_idx}")
                 
                 stool_list = ["選択なし", "快便", "普通", "軟便", "便秘", "出なかった"]
                 current_stool = str(w_selected_row.get("便の状態", "選択なし"))
                 stool_idx = stool_list.index(current_stool) if current_stool in stool_list else 0
-                w_edit_stool = st.selectbox("便の状態", stool_list, index=stool_idx, key="w_edit_stool")
+                w_edit_stool = st.selectbox("便の状態", stool_list, index=stool_idx, key=f"w_edit_stool_{w_selected_idx}")
                 
-                w_edit_memo = st.text_input("備考・メモ", value=str(w_selected_row.get("備考", "")), key="w_edit_memo")
+                w_edit_memo = st.text_input("備考・メモ", value=str(w_selected_row.get("備考", "")), key=f"w_edit_memo_{w_selected_idx}")
                 
-                if st.button("コンディション修正内容を保存", key="w_edit_btn"):
+                if st.button("コンディション修正内容を保存", key=f"w_edit_btn_{w_selected_idx}"):
                     updated_w_list = [w_edit_date, w_edit_weight, w_edit_fat, w_edit_stool, w_edit_memo]
                     update_weight_row(w_selected_idx, updated_w_list)
                     st.success("コンディションデータを更新しました！")
@@ -762,7 +767,7 @@ with main_tab2:
                     
             with w_tab2:
                 st.warning("⚠️ この操作は取り消せません。選択した記録を削除しますか？")
-                if st.button("この記録を削除する", type="primary", key="w_del_btn"):
+                if st.button("この記録を削除する", type="primary", key=f"w_del_btn_{w_selected_idx}"):
                     delete_weight_row(w_selected_idx)
                     st.success("記録を削除しました！")
                     st.rerun()
