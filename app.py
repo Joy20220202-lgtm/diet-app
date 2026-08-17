@@ -394,13 +394,27 @@ with main_tab1:
     all_df = load_all_data()
     meal_type = st.selectbox("食事区分を選択してください", ["朝食", "昼食", "夕食", "間食"])
     input_options = ["テキスト入力", "画像アップロード", "カメラで撮影"]
-    past_foods = []
+# 過去メニュー辞書の作成（Geminiを介さず直接数値を取得するため）
+    past_food_dict = {}
     if not all_df.empty and "食事内容" in all_df.columns:
-        past_foods = [f for f in all_df["食事内容"].unique().tolist() if f]
-        if past_foods:
-            input_options.append("過去のメニューから選択")
+        for _, row in all_df.iterrows():
+            f_name = row.get("食事内容")
+            if f_name:
+                past_food_dict[f_name] = {
+                    "food_name": f_name,
+                    "calories": int(pd.to_numeric(row.get("カロリー", 0), errors="coerce") or 0),
+                    "protein_g": float(pd.to_numeric(row.get("タンパク質", 0.0), errors="coerce") or 0.0),
+                    "fat_g": float(pd.to_numeric(row.get("脂質", 0.0), errors="coerce") or 0.0),
+                    "carbs_g": float(pd.to_numeric(row.get("炭水化物", 0.0), errors="coerce") or 0.0),
+                    "micro_notes": str(row.get("備考", ""))
+                }
+    past_foods = list(past_food_dict.keys())
+    if past_foods:
+        input_options.append("過去のメニューから選択")
+
     input_type = st.radio("入力方法を選択してください", input_options, horizontal=True)
     input_content = None
+
     if input_type == "テキスト入力":
         text_val = st.text_input("食事内容を入力（例: 鮭の塩焼き1切れ、白米200g）")
         if text_val:
@@ -422,18 +436,51 @@ with main_tab1:
     elif input_type == "過去のメニューから選択":
         selected_past_foods = st.multiselect("過去に記録したメニューを選択（複数選択可）", past_foods, placeholder="メニューを選択してください")
         if selected_past_foods:
-            # 選択された複数のメニューを「、」で繋げて1つの入力にする
-            input_content = "、".join(selected_past_foods)
-    # OCR読み取りチェックボックス（追加）
-    is_ocr = st.checkbox("🏷️ パッケージ裏の「栄養成分表示」をそのまま読み取る", value=False, help="コンビニ商品やプロテイン等の成分表写真を正確に読み取ります。")
+            # --- Geminiを介さず、過去データから直接合算して即時反映 ---
+            combined_food_name = "、".join(selected_past_foods)
+            total_cal = sum(past_food_dict[f]["calories"] for f in selected_past_foods)
+            total_p = round(sum(past_food_dict[f]["protein_g"] for f in selected_past_foods), 1)
+            total_f = round(sum(past_food_dict[f]["fat_g"] for f in selected_past_foods), 1)
+            total_c = round(sum(past_food_dict[f]["carbs_g"] for f in selected_past_foods), 1)
+            
+            # 備考（栄養メモ）の結合
+            notes_list = [f"{f}: {past_food_dict[f]['micro_notes']}" for f in selected_past_foods if past_food_dict[f]["micro_notes"]]
+            combined_notes = " / ".join(notes_list)
+            
+            # 各食材の内訳リスト（画面表示用）
+            breakdown_items = [
+                {
+                    "name": past_food_dict[f]["food_name"],
+                    "portion": "過去記録値",
+                    "calories": past_food_dict[f]["calories"],
+                    "protein_g": past_food_dict[f]["protein_g"],
+                    "fat_g": past_food_dict[f]["fat_g"],
+                    "carbs_g": past_food_dict[f]["carbs_g"]
+                }
+                for f in selected_past_foods
+            ]
+            
+            st.session_state["result"] = {
+                "food_name": combined_food_name,
+                "calories": total_cal,
+                "protein_g": total_p,
+                "fat_g": total_f,
+                "carbs_g": total_c,
+                "micro_notes": combined_notes,
+                "items": breakdown_items
+            }
 
-    if st.button("カロリー・PFCを計算する") and input_content:
-        with st.spinner("Geminiが解析中..."):
-            try:
-                res = analyze_nutrition(input_content, MY_API_KEY, is_ocr=is_ocr)
-                st.session_state["result"] = res
-            except Exception as e:
-                st.error(f"解析エラー: {e}")
+    # テキスト入力・画像・カメラの時のみGemini解析ボタンを表示
+    if input_type != "過去のメニューから選択":
+        is_ocr = st.checkbox("🏷️ パッケージ裏の「栄養成分表示」をそのまま読み取る", value=False, help="コンビニ商品やプロテイン等の成分表写真を正確に読み取ります。")
+
+        if st.button("カロリー・PFCを計算する", key="btn_calc_nutrition") and input_content:
+            with st.spinner("Geminiが解析中..."):
+                try:
+                    res = analyze_nutrition(input_content, MY_API_KEY, is_ocr=is_ocr)
+                    st.session_state["result"] = res
+                except Exception as e:
+                    st.error(f"解析エラー: {e}")
 
     if "result" in st.session_state:
         res = st.session_state["result"]
