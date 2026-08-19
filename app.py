@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import time
 from datetime import datetime, timezone, timedelta
 import gspread
 import pandas as pd
@@ -36,9 +37,10 @@ class NutritionData(BaseModel):
     fat_g: float = Field(description="脂質(g)")
     carbs_g: float = Field(description="炭水化物(g)")
     micro_notes: str = Field(description="食物繊維量(g)や、豊富に含まれる主要ビタミン・ミネラル等の栄養要約（例: 食物繊維 4.5g / ビタミンB群・D・鉄分が豊富）", default="")
-    items: list[FoodItemDetail] = Field(description="構成される各食材・料理ごとの推定内訳リスト", default=[])
+    items: list[FoodItemDetail] = Field(description="構成される各食材・料理ごとの推定内訳リスト", default=[]) #FoodItemDetail（食材1つ分のデータ構造）をリストの中に指定することで、「食事全体のデータの中に、食材ごとの詳細データが複数個入る」という 入れ子（階層）構造 を作っています。
 
 # --- 2. Gemini API解析関数（OCRモード対応） ---
+# --- 2. Gemini API解析関数（自動リトライ＆フォールバック対応） ---
 def analyze_nutrition(input_data, api_key: str, is_ocr: bool = False) -> dict:
     client = genai.Client(api_key=api_key)
     
@@ -59,16 +61,36 @@ def analyze_nutrition(input_data, api_key: str, is_ocr: bool = False) -> dict:
         contents = [prompt] + input_data
     else:
         contents = [prompt, input_data]
-        
-    response = client.models.generate_content(
-        model='gemini-flash-latest',
-        contents=contents,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=NutritionData,
-        ),
-    )
-    return json.loads(response.text)
+
+    # 混雑時に自動で試行するモデル候補
+    models_to_try = ['gemini-flash-latest', 'gemini-2.5-flash-lite', 'gemini-2.0-flash']
+    max_retries = 3
+    
+    last_error = None
+    for model_name in models_to_try:
+        for attempt in range(max_retries):
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=NutritionData,
+                    ),
+                )
+                return json.loads(response.text)
+            except Exception as e:
+                last_error = e
+                err_str = str(e)
+                # 503（混雑）や429（レート制限）の場合は待機して再試行
+                if "503" in err_str or "UNAVAILABLE" in err_str or "429" in err_str:
+                    time.sleep(1.5 * (attempt + 1))  # 1.5秒、3.0秒と少しずつ間隔を空けて再試行
+                    continue
+                else:
+                    raise e
+                    
+    # 全てのモデル・試行で失敗した場合のみエラーを返す
+    raise last_error
 
 # --- 今日の食事AIアドバイス生成関数（追加） ---
 def get_daily_advice(today_df: pd.DataFrame, targets: dict, c_sum: float, p_sum: float, f_sum: float, carbs_sum: float, api_key: str) -> str:
@@ -103,23 +125,25 @@ def get_daily_advice(today_df: pd.DataFrame, targets: dict, c_sum: float, p_sum:
         contents=prompt
     )
     return response.text
-# --- 3. スプレッドシート操作関数 ---
+
 # --- 3. スプレッドシート操作関数（キャッシュ最適化版） ---
 def get_spreadsheet():
     try:
+        # 【第1ルート】クラウド環境：テキスト丸ごと一時ファイル化
         if "GCP_JSON_TEXT" in st.secrets and st.secrets["GCP_JSON_TEXT"]:
             json_text = st.secrets["GCP_JSON_TEXT"]
             with open("credentials_cloud.json", "w", encoding="utf-8") as f:
                 f.write(json_text)
             return gspread.service_account(filename="credentials_cloud.json").open_by_key(SPREADSHEET_ID)
         elif "gcp_service_account" in st.secrets:
+            # 【第2ルート】クラウド環境：辞書（TOMLテーブル）直接渡し
             creds_dict = dict(st.secrets["gcp_service_account"])
             if "private_key" in creds_dict:
                 creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
             return gspread.service_account_from_dict(creds_dict).open_by_key(SPREADSHEET_ID)
     except Exception:
         pass
-        
+    # 【第3ルート】ローカルPC環境：手元の credentials.json ファイルを直接利用   
     return gspread.service_account(filename="credentials.json").open_by_key(SPREADSHEET_ID)
 
 def get_worksheet():
