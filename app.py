@@ -63,7 +63,8 @@ def analyze_nutrition(input_data, api_key: str, is_ocr: bool = False) -> dict:
         contents = [prompt, input_data]
 
     # 混雑時に自動で試行するモデル候補
-    models_to_try = ['gemini-flash-latest', 'gemini-2.5-flash-lite', 'gemini-2.0-flash']
+    # 混雑時に自動で試行する最新モデル候補（3.5世代で統一）
+    models_to_try = ['gemini-flash-latest', 'gemini-3.5-flash-lite', 'gemini-3.5-flash']
     max_retries = 3
     
     last_error = None
