@@ -431,12 +431,13 @@ with main_tab1:
     all_df = load_all_data()
     meal_type = st.selectbox("食事区分を選択してください", ["朝食", "昼食", "夕食", "間食"])
     input_options = ["テキスト入力", "画像アップロード", "カメラで撮影"]
-# 過去メニュー辞書の作成（Geminiを介さず直接数値を取得するため）
+    # 過去メニュー辞書の作成（先頭に「*」がついたレギュラーメニューのみ抽出）
     past_food_dict = {}
     if not all_df.empty and "食事内容" in all_df.columns:
         for _, row in all_df.iterrows():
-            f_name = row.get("食事内容")
-            if f_name:
+            f_name = str(row.get("食事内容", "")).strip()
+            # 先頭に半角「*」または全角「＊」がついているものだけを対象にする
+            if f_name and (f_name.startswith("*") or f_name.startswith("＊")):
                 past_food_dict[f_name] = {
                     "food_name": f_name,
                     "calories": int(pd.to_numeric(row.get("カロリー", 0), errors="coerce") or 0),
