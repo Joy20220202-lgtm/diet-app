@@ -368,27 +368,25 @@ with tab_history:
             st.caption(f"▲ {selected_graph_ex} のMAX重量推移 (kg)")
 
         st.divider()
-        
-        # --- 🛠️ 過去記録の削除セクション ---
+        # --- 🛠️ 過去記録の削除セクション（format_funcを使わない安全な書き方） ---
         st.subheader("🛠️ 過去記録の削除")
         st.caption("誤って記録したセットを選択して削除できます。")
         
-        del_options = []
+        del_options_map = {}
         for idx, row in all_logs.iterrows():
             w_label = str(row.get("重量", "")) if str(row.get("重量", "")) == "自重" else str(row.get("重量", "")) + "kg"
             memo_str = " / メモ: " + str(row.get("メモ", "")) if row.get("メモ") else ""
-            lbl = "[" + str(row.get("日付", "")) + "] [" + str(row.get("部位", "")) + "] " + str(row.get("種目名", "")) + " - 第" + str(row.get("セット", "")) + "セット (" + w_label + " × " + str(row.get("回数", "")) + "回)" + memo_str
-            del_options.append((idx, lbl))
+            lbl = f"No.{idx+1} [{row.get('日付', '')}] [{row.get('部位', '')}] {row.get('種目名', '')} - 第{row.get('セット', '')}セット ({w_label} × {row.get('回数', '')}回){memo_str}"
+            del_options_map[lbl] = idx
             
-        if del_options:
-            sel_del_opt = st.selectbox(
+        if del_options_map:
+            selected_label = st.selectbox(
                 "削除する記録を選択してください",
-                options=del_options,
-                format_func=lambda x: x,
+                options=list(del_options_map.keys()),
                 key="sel_del_workout"
             )
-            if sel_del_opt:
-                target_del_idx = sel_del_opt[0]
+            if selected_label:
+                target_del_idx = del_options_map[selected_label]
                 st.warning("⚠️ この操作は取り消せません。選択した記録を削除しますか？")
                 if st.button("🗑️ この記録を削除する", type="primary", key="btn_exec_del_workout"):
                     delete_workout_row(target_del_idx)
