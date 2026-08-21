@@ -330,7 +330,6 @@ with tab_history:
     if all_logs.empty:
         st.info("過去のトレーニング記録はまだありません。")
     else:
-        # 日付ごとの集計サマリー
         calc_df = all_logs.copy()
         calc_df["ボリューム(kg)"] = pd.to_numeric(calc_df["ボリューム(kg)"], errors="coerce").fillna(0)
         
@@ -348,7 +347,6 @@ with tab_history:
         
         st.divider()
         
-        # 種目ごとの成長推移グラフ
         st.write("#### 📈 種目別の成長推移 (MAX重量 & ボリューム)")
         all_unique_exercises = sorted(all_logs["種目名"].unique().tolist())
         selected_graph_ex = st.selectbox("分析したい種目を選択", all_unique_exercises)
@@ -369,12 +367,39 @@ with tab_history:
             st.line_chart(ex_growth_df, x="日付", y="MAX重量 (kg)")
             st.caption(f"▲ {selected_graph_ex} のMAX重量推移 (kg)")
 
+        st.divider()
+        
+        # --- 🛠️ 過去記録の削除セクション ---
+        st.subheader("🛠️ 過去記録の削除")
+        st.caption("誤って記録したセットを選択して削除できます。")
+        
+        del_options = []
+        for idx, row in all_logs.iterrows():
+            w_label = str(row.get("重量", "")) if str(row.get("重量", "")) == "自重" else str(row.get("重量", "")) + "kg"
+            memo_str = " / メモ: " + str(row.get("メモ", "")) if row.get("メモ") else ""
+            lbl = "[" + str(row.get("日付", "")) + "] [" + str(row.get("部位", "")) + "] " + str(row.get("種目名", "")) + " - 第" + str(row.get("セット", "")) + "セット (" + w_label + " × " + str(row.get("回数", "")) + "回)" + memo_str
+            del_options.append((idx, lbl))
+            
+        if del_options:
+            sel_del_opt = st.selectbox(
+                "削除する記録を選択してください",
+                options=del_options,
+                format_func=lambda x: x,
+                key="sel_del_workout"
+            )
+            if sel_del_opt:
+                target_del_idx = sel_del_opt[0]
+                st.warning("⚠️ この操作は取り消せません。選択した記録を削除しますか？")
+                if st.button("🗑️ この記録を削除する", type="primary", key="btn_exec_del_workout"):
+                    delete_workout_row(target_del_idx)
+                    st.success("記録を削除しました！")
+                    st.rerun()
+
 # ==========================================
 # タブ3：種目マスタ管理
 # ==========================================
 with tab_master:
     st.subheader("⚙️ 種目マスタの追加・管理")
-    
     st.write("新しい種目をライブラリに追加できます。追加した種目は即座にワークアウト記録で選択可能になります。")
     
     with st.form("form_add_exercise"):
